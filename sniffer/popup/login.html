@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>CPCT Data Safe - Login</title>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="cpctDataSafePopup.css">
+  <link rel="stylesheet" href="login.css">
+</head>
+<body>
+  <div class="container login-container">
+    <header>
+      <h1>CPCT Data Safe</h1>
+      <div class="status-indicator"></div>
+    </header>
+    
+    <section class="login-section">
+      <h2>Login</h2>
+      <div id="login-form">
+        <div class="form-group">
+          <label for="username">Usuário:</label>
+          <input type="text" id="username" name="username" required>
+        </div>
+        <div class="form-group">
+          <label for="password">Senha:</label>
+          <input type="password" id="password" name="password" required>
+        </div>
+        <div class="form-actions">
+          <button id="login-button" class="primary-button">Entrar</button>
+        </div>
+        <div id="login-status" class="status-message"></div>
+      </div>
+    </section>
+    
+    <section class="register-section">
+      <h2>Novo Usuário?</h2>
+      <button id="register-toggle" class="secondary-button">Registrar</button>
+      <div id="register-form" style="display: none;">
+        <div class="form-group">
+          <label for="new-username">Novo Usuário:</label>
+          <input type="text" id="new-username" name="new-username" required>
+        </div>
+        <div class="form-group">
+          <label for="new-password">Nova Senha:</label>
+          <input type="password" id="new-password" name="new-password" required>
+        </div>
+        <div class="form-group">
+          <label for="confirm-password">Confirmar Senha:</label>
+          <input type="password" id="confirm-password" name="confirm-password" required>
+        </div>
+        <div class="form-actions">
+          <button id="register-button" class="primary-button">Registrar</button>
+          <button id="cancel-register" class="secondary-button">Cancelar</button>
+        </div>
+        <div id="register-status" class="status-message"></div>
+      </div>
+    </section>
+  </div>
+  
+  <script src="login.js"></script>
+</body>
+</html>

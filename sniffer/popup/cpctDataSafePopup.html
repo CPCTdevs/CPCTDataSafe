@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>CPCT Data Safe</title>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="cpctDataSafePopup.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>CPCT Data Safe</h1>
+      <div class="status-indicator active"></div>
+    </header>
+    
+    <section class="user-section">
+      <div class="user-info-container">
+        <span id="user-info">Usuário: Carregando...</span>
+        <button id="logout-button" class="secondary-button">Sair</button>
+      </div>
+    </section>
+    
+    <section class="stats-section">
+      <h2>Estatísticas de Coleta</h2>
+      <div id="data-stats" class="stats-container">
+        <div class="loading">Carregando estatísticas...</div>
+      </div>
+      
+      <div class="upload-info">
+        <div>
+          <span>Último Envio: </span>
+          <span id="last-upload">Nunca</span>
+        </div>
+        <button id="force-upload" class="primary-button">Enviar Agora</button>
+      </div>
+    </section>
+    
+    <section class="export-section">
+      <h2>Exportar Dados</h2>
+      <div class="export-buttons">
+        <button id="export-all-csv" class="secondary-button">Exportar Tudo como CSV</button>
+        <div class="export-dropdown">
+          <button id="export-specific" class="secondary-button">Exportar Dados Específicos ▼</button>
+          <div class="export-dropdown-content">
+            <button id="export-requests" class="dropdown-item">Exportar Requisições</button>
+            <button id="export-user-actions" class="dropdown-item">Exportar Ações do Usuário</button>
+            <button id="export-headers" class="dropdown-item">Exportar Cabeçalhos</button>
+            <button id="export-metadata" class="dropdown-item">Exportar Metadados</button>
+            <button id="export-profiles" class="dropdown-item">Exportar Perfis</button>
+            <button id="export-document-contents" class="dropdown-item">Exportar Conteúdo de Documentos</button>
+          </div>
+        </div>
+      </div>
+    </section>
+    
+    <section class="api-info-section">
+      <h2>Informações da API</h2>
+      <div id="api-info" class="api-info-container">
+        <div class="api-info-item">
+          <span class="api-info-label">Destino:</span>
+          <span id="api-destination" class="api-info-value">Não configurado</span>
+        </div>
+        <div class="api-info-item">
+          <span class="api-info-label">Status:</span>
+          <span id="api-status" class="api-info-value">Desconhecido</span>
+        </div>
+        <div class="api-info-item">
+          <span class="api-info-label">Último Envio:</span>
+          <span id="api-last-upload" class="api-info-value">Nunca</span>
+        </div>
+      </div>
+    </section>
+    
+    <div id="status" class="status-message"></div>
+  </div>
+  
+  <script src="../utils/csv-exporter.js"></script>
+  <script src="../lib/jszip.min.js"></script>
+  <script src="cpctDataSafePopup.js"></script>
+</body>
+</html>
