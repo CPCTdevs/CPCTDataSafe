@@ -15,7 +15,6 @@ let exportProfilesButton
 let apiDestinationElement
 let apiStatusElement
 let apiLastUploadElement
-let pingInfoElement
 let userInfoElement
 let logoutButton
 
@@ -37,6 +36,8 @@ let currentUser = {
 
 // Inicializar quando o popup carregar
 document.addEventListener("DOMContentLoaded", () => {
+  console.log("DOM carregado, iniciando popup...");
+  
   // Verificar se o usuário está logado
   checkLoginStatus();
 
@@ -53,7 +54,13 @@ document.addEventListener("DOMContentLoaded", () => {
   apiDestinationElement = document.getElementById("api-destination")
   apiStatusElement = document.getElementById("api-status")
   apiLastUploadElement = document.getElementById("api-last-upload")
-  pingInfoElement = document.getElementById("ping-info")
+  
+  // Verificar se os elementos foram encontrados
+  console.log("Elementos da API encontrados:", {
+    destination: !!apiDestinationElement,
+    status: !!apiStatusElement,
+    lastUpload: !!apiLastUploadElement
+  });
 
   // Botões de exportação
   exportAllButton = document.getElementById("export-all-csv")
@@ -95,12 +102,6 @@ document.addEventListener("DOMContentLoaded", () => {
     logoutButton.addEventListener("click", handleLogout)
   }
 
-  // Adicionar botão de teste de ping
-  const checkPingButton = document.getElementById("check-ping")
-  if (checkPingButton) {
-    checkPingButton.addEventListener("click", checkApiPing)
-  }
-
   // Configurar listeners dos botões de exportação
   if (exportAllButton) {
     exportAllButton.addEventListener("click", exportAllData)
@@ -128,6 +129,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Configurar intervalo de atualização
   setInterval(loadDataStats, 5000)
+  
+  // Verificar status da API na inicialização
+  console.log("Iniciando verificação do status da API...");
+  checkApiStatus()
 })
 
 // Verificar se o usuário está logado
@@ -176,23 +181,101 @@ function handleLogout() {
   });
 }
 
-// Verificar ping da API manualmente
-function checkApiPing() {
-  if (typeof chrome !== "undefined" && chrome.runtime) {
-    statusElement.textContent = "Verificando conexão..."
-    chrome.runtime.sendMessage({ action: "checkApiConnection" }, (response) => {
-      if (response && response.success) {
-        setTimeout(() => {
-          // Atualizar dados após um breve atraso para dar tempo do ping retornar
-          loadDataStats()
-          statusElement.textContent = "Verificação de conexão concluída!"
-          setTimeout(() => {
-            statusElement.textContent = ""
-          }, 2000)
-        }, 1000)
-      }
-    })
+// Verificar status da API
+function checkApiStatus() {
+  console.log("checkApiStatus: Iniciando verificação...");
+  
+  chrome.runtime.sendMessage({ action: "getApiConfig" }, (config) => {
+    console.log("checkApiStatus: Resposta do getApiConfig:", config);
+    
+    if (chrome.runtime.lastError) {
+      console.error("checkApiStatus: Erro ao obter configuração da API:", chrome.runtime.lastError);
+      updateApiStatusDisplay(false, null);
+      return;
+    }
+    
+    if (config && config.baseUrl) {
+      console.log(`checkApiStatus: Fazendo requisição para ${config.baseUrl}/health`);
+      
+      fetch(`${config.baseUrl}/health`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      })
+      .then(response => {
+        console.log("checkApiStatus: Status da resposta:", response.status, response.ok);
+        console.log("checkApiStatus: Headers da resposta:", [...response.headers]);
+        
+        if (response.ok) {
+          // Tenta fazer parse do JSON, mas se falhar ainda considera conectado
+          response.json()
+            .then(data => {
+              console.log("checkApiStatus: Dados recebidos:", data);
+              updateApiStatusDisplay(true, data);
+            })
+            .catch(jsonError => {
+              console.log("checkApiStatus: Erro ao fazer parse do JSON, mas API está respondendo:", jsonError);
+              updateApiStatusDisplay(true, { message: "API respondendo, mas resposta não é JSON válido" });
+            });
+        } else {
+          console.error("checkApiStatus: API retornou status não-OK:", response.status);
+          response.text().then(text => {
+            console.error("checkApiStatus: Resposta da API:", text);
+          });
+          updateApiStatusDisplay(false, null);
+        }
+      })
+      .catch(error => {
+        console.error("checkApiStatus: Erro ao verificar status da API:", error);
+        updateApiStatusDisplay(false, null);
+      });
+    } else {
+      console.error("checkApiStatus: Configuração da API não encontrada ou inválida:", config);
+      updateApiStatusDisplay(false, null);
+    }
+  });
+}
+
+// Atualizar exibição do status da API
+function updateApiStatusDisplay(isHealthy, healthData = null) {
+  console.log("updateApiStatusDisplay: Chamada com isHealthy =", isHealthy, "e healthData =", healthData);
+  console.log("updateApiStatusDisplay: apiStatusElement existe?", !!apiStatusElement);
+  
+  if (!apiStatusElement) {
+    console.error("updateApiStatusDisplay: Elemento apiStatus não encontrado!");
+    console.log("updateApiStatusDisplay: Tentando encontrar elemento novamente...");
+    apiStatusElement = document.getElementById("api-status");
+    console.log("updateApiStatusDisplay: Elemento encontrado agora?", !!apiStatusElement);
+    
+    if (!apiStatusElement) {
+      return;
+    }
   }
+  
+  console.log("updateApiStatusDisplay: Atualizando status da API para:", isHealthy ? "Conectado" : "Erro de Conexão");
+  
+  apiStatusElement.textContent = isHealthy ? "Conectado" : "Erro de Conexão";
+  apiStatusElement.className = isHealthy ? "api-info-value success" : "api-info-value error";
+  
+  // Criar tooltip com informações adicionais
+  let tooltipText = `Status: ${isHealthy ? 'Conectado' : 'Erro de Conexão'}\n`;
+  
+  if (healthData) {
+    tooltipText += `Versão: ${healthData.version || 'N/A'}\n`;
+    if (healthData.message) {
+      tooltipText += `Mensagem: ${healthData.message}\n`;
+    }
+    if (healthData.timestamp) {
+      tooltipText += `Última atualização: ${new Date(healthData.timestamp).toLocaleString("pt-BR")}`;
+    }
+  }
+  
+  tooltipText += `\nÚltima verificação: ${new Date().toLocaleString("pt-BR")}`;
+  
+  apiStatusElement.title = tooltipText;
+  
+  console.log("updateApiStatusDisplay: Status atualizado com sucesso");
 }
 
 // Carregar estatísticas de dados do script de background
@@ -272,33 +355,6 @@ function updateApiInfoDisplay(stats) {
           }
         } else {
           apiDestinationElement.textContent = "Configurado internamente"
-        }
-      }
-
-      // Status da API
-      if (apiStatusElement) {
-        if (config && config.status) {
-          // Atualizar informações de status e ping
-          apiStatusElement.textContent = config.status.success ? "Conectado" : "Erro de Conexão"
-          apiStatusElement.className = config.status.success ? "api-info-value success" : "api-info-value error"
-          
-          // Exibir informações de ping se disponíveis
-          if (pingInfoElement && config.status.pingTime !== null) {
-            pingInfoElement.textContent = `${config.status.pingTime}ms`;
-            pingInfoElement.className = config.status.pingTime < 200 ? 
-                                        "api-info-value success" : 
-                                        (config.status.pingTime < 500 ? "api-info-value warning" : "api-info-value error");
-          } else if (pingInfoElement) {
-            pingInfoElement.textContent = "N/A";
-            pingInfoElement.className = "api-info-value";
-          }
-        } else {
-          apiStatusElement.textContent = "Desconhecido"
-          apiStatusElement.className = "api-info-value"
-          if (pingInfoElement) {
-            pingInfoElement.textContent = "N/A";
-            pingInfoElement.className = "api-info-value";
-          }
         }
       }
 
@@ -463,3 +519,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     loadDataStats()
   }
 })
+
+// Verificar periodicamente o status da API
+setInterval(checkApiStatus, 30000)

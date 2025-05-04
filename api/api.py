@@ -223,8 +223,55 @@ def update_user_csv(user_id, username, new_data_rows):
 
 # --- Endpoints da API ---
 
+# Health check endpoint
+@app.route('/health', methods=['GET'])
+@app.route('/data/health', methods=['GET'])
+def health_check():
+    """Endpoint para verificação de saúde da API"""
+    try:
+        # Verifica se as pastas necessárias existem
+        data_folder_exists = app.config['DATA_FOLDER'].exists()
+        csv_folder_exists = app.config['CSV_OUTPUT_FOLDER'].exists()
+        
+        # Tenta escrever um arquivo temporário para verificar permissões
+        test_file = app.config['DATA_FOLDER'] / '.health_check'
+        can_write = True
+        try:
+            with open(test_file, 'w') as f:
+                f.write('health check')
+            test_file.unlink()  # Remove o arquivo de teste
+        except:
+            can_write = False
+        
+        status = {
+            'status': 'healthy',
+            'timestamp': datetime.now().isoformat(),
+            'version': app.config['API_VERSION'],
+            'checks': {
+                'data_folder_exists': data_folder_exists,
+                'csv_folder_exists': csv_folder_exists,
+                'can_write_files': can_write
+            }
+        }
+        
+        # Se alguma verificação falhar, retorna status degraded
+        if not all(status['checks'].values()):
+            status['status'] = 'degraded'
+            return jsonify(status), 503
+        
+        return jsonify(status), 200
+        
+    except Exception as e:
+        logger.error(f"Erro no health check: {str(e)}")
+        return jsonify({
+            'status': 'unhealthy',
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
 @app.route('/', methods=['OPTIONS'])
 @app.route('/data', methods=['OPTIONS'])
+@app.route('/health', methods=['OPTIONS'])
 @app.route(f'/api/{app.config["API_VERSION"]}/data', methods=['OPTIONS'])
 @app.route(f'/api/{app.config["API_VERSION"]}/auth', methods=['OPTIONS'])
 @app.route(f'/api/{app.config["API_VERSION"]}/user', methods=['OPTIONS'])
@@ -464,7 +511,7 @@ def verify_token_endpoint():
     return jsonify({
         "valid": True,
         "user": user_info['user'],
-        "role": user_info['role']
+        'role': user_info['role']
     })
 
 # --- Execução da API ---

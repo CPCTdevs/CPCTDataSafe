@@ -1,766 +1,878 @@
-let eventCorrelationId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
-let backgroundCommunicationVerified = false;
-let scriptInjectionAttempted = false;
-let scriptInjectedSuccessfully = false;
+// ===================== CONFIGURAÇÃO =====================
 
-function isExtensionContextValid() {
-  try {
-    chrome.runtime.id;
-    return true;
-  } catch (e) {
-    console.warn("CPCT Data Safe: Extension context invalidated.");
-    return false;
+const CONFIG = {
+  GOOGLE_DOMAINS: ['google.com', 'youtube.com'],
+  REQUEST_ASSOCIATION_TIME: 5000,
+  CORRELATION_UPDATE_INTERVAL: 15000,
+  MOUSE_MOVEMENT_INTERVAL: 5000,
+  CLEANUP_INTERVAL: 30000,
+  REQUEST_CHECK_INTERVAL: 60000,
+  KEY_INPUT_DEBOUNCE: 1000,
+  SCROLL_DEBOUNCE: 500,
+  DOCUMENT_CONTENT_DEBOUNCE: 5000,
+  METADATA_EXTRACTION_DELAY: 2000,
+  DOCUMENT_CAPTURE_DELAY: 3000,
+  INITIALIZATION_DELAY: 1000
+};
+
+// ===================== GERENCIAMENTO DE ESTADO =====================
+
+class AppState {
+  constructor() {
+    this.eventCorrelationId = this.generateCorrelationId();
+    this.backgroundCommunicationVerified = false;
+    this.scriptInjectionAttempted = false;
+    this.scriptInjectedSuccessfully = false;
+    this.lastUserAction = null;
+    this.pageLoadTime = performance.now();
+    this.focusState = document.hasFocus();
+    this.lastCorrelationUpdateTime = Date.now();
+    this.lastDocumentContent = null;
+    this.documentChangeBuffer = [];
+    this.documentChangeTimer = null;
+    this.pendingRequests = new Map();
+    this.lastRequestTime = null;
+    this.lastInteractionTime = null;
+    this.lastMousePosition = { x: 0, y: 0 };
+    this.mouseMoved = false;
+    this.keyBuffer = "";
+    this.keyTimer = null;
+  }
+
+  generateCorrelationId() {
+    return Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
   }
 }
 
-let lastUserAction = null; 
-let pageLoadTime = performance.now();
-let focusState = document.hasFocus();
-let lastCorrelationUpdateTime = Date.now();
+const state = new AppState();
 
-// Rastreamento de conteúdo do documento
-let lastDocumentContent = null;
+// ===================== FUNÇÕES UTILITÁRIAS =====================
 
-let documentChangeBuffer = [];
-let documentChangeTimer = null;
+class Utils {
+  static isExtensionContextValid() {
+    try {
+      chrome.runtime.id;
+      return true;
+    } catch (e) {
+      console.warn("CPCT Data Safe: Contexto da extensão invalidado.");
+      return false;
+    }
+  }
 
-// Rastreamento de requisições
-let pendingRequests = new Map(); // Mapa de requestId -> info da requisição
-let lastRequestTime = null;
-let lastInteractionTime = null;
-const MAX_REQUEST_ASSOCIATION_TIME = 5000; // Tempo máximo para associar interação com requisição (ms)
-
-
-initialize();
-
-
-function injectInterceptorFile() {
-  console.log("[CPCT Content Script] Attempting to inject interceptor script from file...");
-  scriptInjectionAttempted = true;
-  try {
-    const script = document.createElement("script");
-    script.src = chrome.runtime.getURL("interceptor.js");
-    script.onload = function() {
-      console.log("[CPCT Content Script] Interceptor script loaded successfully (onload event).");
-      this.remove();
+  static debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+      const later = () => {
+        clearTimeout(timeout);
+        func(...args);
+      };
+      clearTimeout(timeout);
+      timeout = setTimeout(later, wait);
     };
-    script.onerror = function(e) {
-      console.error("[CPCT Content Script] Failed to load interceptor script from file.", e);
-      if (isExtensionContextValid()) {
-          sendUserActionWithCorrelation({
-              type: "diagnosticEvent",
-              event: "scriptInjectionFailed",
-              method: "fileLoad",
-              error: e ? (e.message || "Unknown load error") : "Unknown load error",
-              timestamp: new Date().toISOString()
-          });
+  }
+
+  static getSelector(element) {
+    if (!element) return null;
+    if (element.id) return `#${element.id}`;
+    if (element.tagName === "BODY") return "BODY";
+
+    let path = "";
+    try {
+      while (element && element.parentElement && element.tagName !== "BODY") {
+        let siblingIndex = 1;
+        let sibling = element.previousElementSibling;
+        while (sibling) {
+          if (sibling.tagName === element.tagName) {
+            siblingIndex++;
+          }
+          sibling = sibling.previousElementSibling;
+        }
+        const tagName = element.tagName.toLowerCase();
+        const nthChild = `:nth-of-type(${siblingIndex})`;
+        path = ` > ${tagName}${nthChild}${path}`;
+        element = element.parentElement;
       }
+      return element && element.tagName === "BODY" ? `BODY${path}`.trim() : null;
+    } catch (e) {
+      console.warn("[CPCT Content Script] Erro ao gerar seletor:", e);
+      return null;
+    }
+  }
+
+  static getTargetInfo(element) {
+    if (!element) return null;
+    return {
+      tagName: element.tagName,
+      id: element.id || null,
+      classes: element.classList ? Array.from(element.classList) : [],
+      selector: this.getSelector(element),
+      name: element.name || null,
+      role: element.getAttribute("role") || null,
+      ariaLabel: element.getAttribute("aria-label") || null,
+      text: element.innerText ? element.innerText.substring(0, 100) : null
     };
-    (document.head || document.documentElement).appendChild(script);
-  } catch (error) {
-      console.error("[CPCT Content Script] Error creating or appending interceptor script element:", error);
-      if (isExtensionContextValid()) {
-          sendUserActionWithCorrelation({
-              type: "diagnosticEvent",
-              event: "scriptInjectionFailed",
-              method: "fileLoadSetup",
-              error: error ? error.message : "Unknown setup error",
-              timestamp: new Date().toISOString()
-          });
-      }
+  }
+
+  static getLocationInfo() {
+    try {
+      const url = new URL(window.location.href);
+      return {
+        protocol: url.protocol,
+        hostname: url.hostname,
+        pathname: url.pathname,
+        search: url.search,
+        hash: url.hash
+      };
+    } catch (e) {
+      return { raw: window.location.href };
+    }
+  }
+
+  static isSensitiveField(element) {
+    return element.type === "password" || 
+           element.name?.toLowerCase().includes("password");
   }
 }
 
-injectInterceptorFile();
+// ===================== IDENTIFICAÇÃO DE SERVIÇO =====================
 
-window.addEventListener("message", event => {
-  if (event.source !== window || !event.data || !event.data.__CPCT__) {
-    return;
-  }
+class ServiceIdentifier {
+  static identifyGoogleService() {
+    const host = window.location.hostname;
+    const path = window.location.pathname;
 
-  const msg = event.data;
-  console.log(`[CPCT Content Script] Received message from injected script. Type: ${msg.type}`, JSON.stringify(msg));
+    const services = {
+      'mail.google.com': 'Gmail',
+      'drive.google.com': 'Google Drive',
+      'docs.google.com': 'Google Docs',
+      'sheets.google.com': 'Google Sheets',
+      'slides.google.com': 'Google Slides',
+      'calendar.google.com': 'Google Calendar',
+      'meet.google.com': 'Google Meet',
+      'photos.google.com': 'Google Photos',
+      'contacts.google.com': 'Google Contacts',
+      'keep.google.com': 'Google Keep',
+      'youtube.com': 'YouTube'
+    };
 
-  if (msg.type === "scriptInjected") {
-    scriptInjectedSuccessfully = true;
-    console.log("[CPCT Content Script] Confirmed interceptor script is running via message.");
-    verifyBackgroundCommunication();
-    return;
-  }
-  // Associação
-  if (msg.type === "xhr" || msg.type === "fetch" || msg.type === "xhrError" || msg.type === "fetchError") {
-      console.log(`[CPCT Content Script] Checking for association for request: ${msg.requestId}`);
-      if (lastUserAction && (performance.now() - lastUserAction.preciseTimestamp) < MAX_REQUEST_ASSOCIATION_TIME) {
-          console.log(`[CPCT Content Script] Associating request ${msg.requestId} with last action: ${lastUserAction.type} (Timestamp diff: ${performance.now() - lastUserAction.preciseTimestamp}ms)`);
-          msg.associatedUserAction = {
-              type: lastUserAction.type,
-              timestamp: lastUserAction.timestamp,
-              target: lastUserAction.target,
-              value: lastUserAction.value
-          };
-      } else {
-          console.log(`[CPCT Content Script] No recent user action found for association with request ${msg.requestId}. Last action: ${lastUserAction ? lastUserAction.type + ' at ' + lastUserAction.timestamp : 'None'}`);
+    for (const [domain, service] of Object.entries(services)) {
+      if (host.includes(domain)) return service;
+    }
+
+    if (host.includes('google.com')) {
+      if (path.includes('/maps')) return 'Google Maps';
+      if (path === '/' || path.startsWith('/search') || path.startsWith('/webhp')) {
+        return 'Google Search';
       }
+    }
+
+    return 'Other Google Service';
   }
-  
-  try {
-    if (isExtensionContextValid()) {
-      console.log(`[CPCT Content Script] Forwarding message type ${msg.type} to background script...`);
-      chrome.runtime.sendMessage({
-        action: "userAction",
-        data: msg
-      }, function(response) { 
+
+  static identifyCurrentView() {
+    const url = window.location.href;
+    const path = window.location.pathname;
+    const hash = window.location.hash;
+
+    // Visões do Gmail
+    if (url.includes('mail.google.com')) {
+      const views = {
+        '#inbox': 'Inbox',
+        '#sent': 'Sent',
+        '#drafts': 'Drafts'
+      };
+      
+      for (const [hashPattern, view] of Object.entries(views)) {
+        if (hash.startsWith(hashPattern)) return view;
+      }
+      
+      if (hash.match(/#label\/[^\/]+/)) return 'Label View';
+      if (hash.match(/#search\/.+/)) return 'Search Results';
+      if (hash.match(/#[^\/]+\/[^\/]+/)) return 'Email Read View';
+      return 'Gmail - Other';
+    }
+
+    // Visões do Drive
+    if (url.includes('drive.google.com')) {
+      const views = {
+        '/drive/my-drive': 'My Drive',
+        '/drive/shared-with-me': 'Shared with me',
+        '/drive/recent': 'Recent',
+        '/drive/starred': 'Starred',
+        '/drive/trash': 'Trash',
+        '/drive/folders/': 'Folder View',
+        '/drive/search': 'Search Results'
+      };
+      
+      for (const [pathPattern, view] of Object.entries(views)) {
+        if (url.includes(pathPattern)) return view;
+      }
+      return 'Drive - Other';
+    }
+
+    // Editores de documentos
+    if (url.includes('docs.google.com') || 
+        url.includes('sheets.google.com') || 
+        url.includes('slides.google.com')) {
+      if (path.includes('/edit')) return 'Edit Mode';
+      if (path.includes('/view') || path.includes('/preview')) return 'View Mode';
+      if (path.includes('/copy')) return 'Copy Document';
+      if (path.match(/\/d\/[^\/]+\/?$/) || path.match(/\/d\/[^\/]+\/$/)) return 'Edit Mode';
+      return 'Document/Sheet/Slide - Other';
+    }
+
+    // Visões do Calendário
+    if (url.includes('calendar.google.com')) {
+      const views = {
+        '/day': 'Day View',
+        '/week': 'Week View',
+        '/month': 'Month View',
+        '/year': 'Year View',
+        '/agenda': 'Agenda View',
+        '/eventedit': 'Event Edit'
+      };
+      
+      for (const [pathPattern, view] of Object.entries(views)) {
+        if (url.includes(pathPattern)) return view;
+      }
+      return 'Calendar - Other';
+    }
+
+    // Visões de busca
+    if (url.includes('google.com/search') || url.includes('google.com/webhp')) {
+      const params = new URLSearchParams(window.location.search);
+      const searchTypes = {
+        'isch': 'Image Search',
+        'vid': 'Video Search',
+        'nws': 'News Search',
+        'shop': 'Shopping Search'
+      };
+      
+      const tbm = params.get('tbm');
+      return searchTypes[tbm] || 'Web Search Results';
+    }
+
+    return 'Default View';
+  }
+}
+
+// ===================== COMUNICAÇÃO =====================
+
+class Communication {
+  static sendMessage(message, callback) {
+    try {
+      chrome.runtime.sendMessage(message, (response) => {
         if (chrome.runtime.lastError) {
-          console.error(`[CPCT Content Script] Error sending message type ${msg.type} to background:`, chrome.runtime.lastError.message);
-        } else if (response) {
-          console.log(`[CPCT Content Script] Response from background for message type ${msg.type}:`, response);
+          console.error(`[CPCT Content Script] Erro ao enviar mensagem:`, chrome.runtime.lastError.message);
+        } else if (callback) {
+          callback(response);
         }
       });
-
-      if (msg.type === "xhr" || msg.type === "fetch") {
-        lastRequestTime = Date.now();
-      }
-    } else {
-       console.warn(`[CPCT Content Script] Extension context invalid, message type ${msg.type} not forwarded.`);
+    } catch (error) {
+      console.error(`[CPCT Content Script] Erro em sendMessage:`, error);
     }
-  } catch (error) {
-    console.error(`[CPCT Content Script] Error forwarding message type ${msg.type} to background:`, error);
   }
-});
 
-function verifyBackgroundCommunication() {
-  if (!isExtensionContextValid()) return;
-  console.log("[CPCT Content Script] Pinging background script...");
-  try {
-      chrome.runtime.sendMessage({ action: "ping" }, function(response) {
-          if (chrome.runtime.lastError) {
-              console.error("[CPCT Content Script] Ping failed:", chrome.runtime.lastError.message);
-              backgroundCommunicationVerified = false;
-          } else if (response && response.status === "pong") {
-              console.log("[CPCT Content Script] Ping successful!");
-              backgroundCommunicationVerified = true;
-          } else {
-              console.warn("[CPCT Content Script] Ping received unexpected response:", response);
-              backgroundCommunicationVerified = false;
-          }
+  static async verifyBackgroundCommunication() {
+    if (!Utils.isExtensionContextValid()) return;
+    
+    console.log("[CPCT Content Script] Pingando script de background...");
+    try {
+      this.sendMessage({ action: "ping" }, (response) => {
+        if (chrome.runtime.lastError) {
+          console.error("[CPCT Content Script] Ping falhou:", chrome.runtime.lastError.message);
+          state.backgroundCommunicationVerified = false;
+        } else if (response && response.status === "pong") {
+          console.log("[CPCT Content Script] Ping bem sucedido!");
+          state.backgroundCommunicationVerified = true;
+        } else {
+          console.warn("[CPCT Content Script] Ping recebeu resposta inesperada:", response);
+          state.backgroundCommunicationVerified = false;
+        }
       });
-  } catch (error) {
-      console.error("[CPCT Content Script] Error sending ping:", error);
-      backgroundCommunicationVerified = false;
+    } catch (error) {
+      console.error("[CPCT Content Script] Erro ao enviar ping:", error);
+      state.backgroundCommunicationVerified = false;
+    }
+  }
+
+  static refreshCorrelationId() {
+    if (!Utils.isExtensionContextValid()) return;
+
+    try {
+      this.sendMessage({ action: "getCorrelationId" }, (response) => {
+        if (chrome.runtime.lastError) {
+          console.warn("[CPCT Content Script] Erro ao obter ID de correlação:", chrome.runtime.lastError.message);
+          state.eventCorrelationId = state.generateCorrelationId();
+        } else if (response && response.correlationId) {
+          state.eventCorrelationId = response.correlationId;
+        } else {
+          console.warn("[CPCT Content Script] Resposta inválida para ID de correlação.");
+          state.eventCorrelationId = state.generateCorrelationId();
+        }
+        state.lastCorrelationUpdateTime = Date.now();
+      });
+    } catch (error) {
+      console.error("[CPCT Content Script] Erro ao requisitar ID de correlação:", error);
+      state.eventCorrelationId = state.generateCorrelationId();
+      state.lastCorrelationUpdateTime = Date.now();
+    }
   }
 }
 
-function refreshCorrelationId() {
-  if (!isExtensionContextValid()) return;
+// ===================== RASTREAMENTO DE AÇÕES =====================
 
-  try {
-    chrome.runtime.sendMessage({
-      action: "getCorrelationId"
-    }, function(response) {
-      if (chrome.runtime.lastError) {
-        console.warn("[CPCT Content Script] Error getting correlation ID:", chrome.runtime.lastError.message);
-        eventCorrelationId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
-        lastCorrelationUpdateTime = Date.now();
+class ActionTracker {
+  static sendUserActionWithCorrelation(action) {
+    if (!Utils.isExtensionContextValid()) {
+      console.warn("[CPCT Content Script] Tentando enviar ação com contexto inválido:", action.type);
+      return;
+    }
+
+    try {
+      if (Date.now() - state.lastCorrelationUpdateTime > CONFIG.CORRELATION_UPDATE_INTERVAL) {
+        Communication.refreshCorrelationId();
+      }
+
+      state.lastInteractionTime = Date.now();
+
+      const enrichedAction = {
+        ...action,
+        correlationId: state.eventCorrelationId,
+        preciseTimestamp: performance.now(),
+        timeFromPageLoad: performance.now() - state.pageLoadTime,
+        pageContext: {
+          title: document.title,
+          url: window.location.href,
+          referrer: document.referrer,
+          viewport: {
+            width: window.innerWidth,
+            height: window.innerHeight
+          },
+          userAgent: navigator.userAgent,
+          devicePixelRatio: window.devicePixelRatio || 1,
+          language: navigator.language,
+          hasFocus: state.focusState,
+          locationInfo: Utils.getLocationInfo(),
+          service: ServiceIdentifier.identifyGoogleService(),
+          view: ServiceIdentifier.identifyCurrentView()
+        }
+      };
+
+      if (action.type !== "mouseMovement" && action.type !== "scroll") {
+        state.lastUserAction = {
+          type: action.type,
+          timestamp: action.timestamp,
+          preciseTimestamp: enrichedAction.preciseTimestamp,
+          target: action.target,
+          value: action.value
+        };
+        console.log(`[CPCT Content Script] Atualizado lastUserAction: ${state.lastUserAction.type}`);
+      }
+
+      try {
+        if (performance && performance.memory) {
+          enrichedAction.performanceData = {
+            memory: {
+              usedJSHeapSize: performance.memory.usedJSHeapSize,
+              totalJSHeapSize: performance.memory.totalJSHeapSize
+            }
+          };
+        }
+      } catch (e) {}
+
+      console.log(`[CPCT Content Script] Enviando ação do usuário: ${action.type}`);
+      Communication.sendMessage({ action: "userAction", data: enrichedAction });
+
+    } catch (error) {
+      console.error("[CPCT Content Script] Erro em sendUserActionWithCorrelation:", error, action);
+      this.reportInternalError(error, "sendUserActionWithCorrelation", action);
+    }
+  }
+
+  static reportInternalError(error, context, failedAction) {
+    try {
+      if (Utils.isExtensionContextValid()) {
+        Communication.sendMessage({
+          action: "userAction",
+          data: {
+            type: "internalContentScriptError",
+            message: error.message,
+            stack: error.stack,
+            context: context,
+            failedActionType: failedAction ? failedAction.type : "unknown",
+            timestamp: new Date().toISOString()
+          }
+        });
+      }
+    } catch (sendError) {
+      console.error("[CPCT Content Script] Falha ao enviar relatório de erro interno:", sendError);
+    }
+  }
+}
+
+// ===================== MANIPULADORES DE EVENTOS =====================
+
+class EventHandlers {
+  static setupEventListeners() {
+    console.log("[CPCT Content Script] Configurando listeners de eventos...");
+
+    // Eventos de clique
+    document.addEventListener("click", (event) => {
+      ActionTracker.sendUserActionWithCorrelation({
+        type: "click",
+        target: Utils.getTargetInfo(event.target),
+        timestamp: new Date().toISOString(),
+        position: { x: event.clientX, y: event.clientY }
+      });
+    }, true);
+
+    // Eventos de teclado
+    document.addEventListener("keydown", (event) => {
+      if (["Control", "Shift", "Alt", "Meta"].includes(event.key)) return;
+
+      const targetInfo = Utils.getTargetInfo(event.target);
+      let valueToLog = event.key;
+
+      if (Utils.isSensitiveField(event.target)) {
+        valueToLog = "***";
+      }
+
+      clearTimeout(state.keyTimer);
+      state.keyBuffer += valueToLog;
+      
+      state.keyTimer = setTimeout(() => {
+        if (state.keyBuffer) {
+          ActionTracker.sendUserActionWithCorrelation({
+            type: "keyInput",
+            target: targetInfo,
+            value: state.keyBuffer,
+            timestamp: new Date().toISOString()
+          });
+          state.keyBuffer = "";
+        }
+      }, CONFIG.KEY_INPUT_DEBOUNCE);
+
+      if (event.key === "Enter" || event.key === "Tab") {
+        clearTimeout(state.keyTimer);
+        if (state.keyBuffer) {
+          ActionTracker.sendUserActionWithCorrelation({
+            type: "keyInput",
+            target: targetInfo,
+            value: state.keyBuffer,
+            timestamp: new Date().toISOString()
+          });
+          state.keyBuffer = "";
+        }
+        ActionTracker.sendUserActionWithCorrelation({
+          type: "keyDownSpecific",
+          target: targetInfo,
+          key: event.key,
+          code: event.code,
+          timestamp: new Date().toISOString()
+        });
+      }
+    }, true);
+
+    // Eventos de foco
+    window.addEventListener("focus", () => {
+      state.focusState = true;
+      ActionTracker.sendUserActionWithCorrelation({
+        type: "windowFocus",
+        timestamp: new Date().toISOString()
+      });
+    }, true);
+
+    window.addEventListener("blur", () => {
+      state.focusState = false;
+      ActionTracker.sendUserActionWithCorrelation({
+        type: "windowBlur",
+        timestamp: new Date().toISOString()
+      });
+    }, true);
+
+    // Eventos de scroll
+    let scrollTimer = null;
+    document.addEventListener("scroll", () => {
+      clearTimeout(scrollTimer);
+      scrollTimer = setTimeout(() => {
+        ActionTracker.sendUserActionWithCorrelation({
+          type: "scroll",
+          scrollPosition: { x: window.scrollX, y: window.scrollY },
+          timestamp: new Date().toISOString()
+        });
+      }, CONFIG.SCROLL_DEBOUNCE);
+    }, true);
+
+    // Eventos de mudança
+    document.addEventListener("change", (event) => {
+      const targetInfo = Utils.getTargetInfo(event.target);
+      let value = event.target.value;
+      
+      if (Utils.isSensitiveField(event.target)) {
+        value = "***";
+      }
+      
+      ActionTracker.sendUserActionWithCorrelation({
+        type: "change",
+        target: targetInfo,
+        value: value,
+        timestamp: new Date().toISOString()
+      });
+    }, true);
+
+    // Eventos de erro
+    window.addEventListener("error", (event) => {
+      ActionTracker.sendUserActionWithCorrelation({
+        type: "pageError",
+        message: event.message,
+        filename: event.filename,
+        lineno: event.lineno,
+        colno: event.colno,
+        error: event.error ? { 
+          message: event.error.message, 
+          stack: event.error.stack 
+        } : null,
+        timestamp: new Date().toISOString()
+      });
+    });
+
+    window.addEventListener("unhandledrejection", (event) => {
+      ActionTracker.sendUserActionWithCorrelation({
+        type: "pageError",
+        message: "Rejeição de promise não tratada",
+        reason: event.reason ? String(event.reason) : null,
+        timestamp: new Date().toISOString()
+      });
+    });
+
+    // Movimento do mouse
+    document.addEventListener("mousemove", (event) => {
+      state.lastMousePosition = { x: event.clientX, y: event.clientY };
+      state.mouseMoved = true;
+    }, { capture: true, passive: true });
+
+    console.log("[CPCT Content Script] Listeners de eventos configurados.");
+  }
+
+  static setupMessageListener() {
+    window.addEventListener("message", event => {
+      if (event.source !== window || !event.data || !event.data.__CPCT__) {
         return;
       }
 
-      if (response && response.correlationId) {
-        eventCorrelationId = response.correlationId;
-        lastCorrelationUpdateTime = Date.now();
-      } else {
-        console.warn("[CPCT Content Script] Invalid response for correlation ID.");
-        eventCorrelationId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
-        lastCorrelationUpdateTime = Date.now();
+      const msg = event.data;
+      console.log(`[CPCT Content Script] Mensagem recebida do script injetado. Tipo: ${msg.type}`, JSON.stringify(msg));
+
+      if (msg.type === "scriptInjected") {
+        state.scriptInjectedSuccessfully = true;
+        console.log("[CPCT Content Script] Confirmado que script interceptor está rodando via mensagem.");
+        Communication.verifyBackgroundCommunication();
+        return;
+      }
+
+      // Associar requisições com ações recentes do usuário
+      if (msg.type === "xhr" || msg.type === "fetch" || msg.type === "xhrError" || msg.type === "fetchError") {
+        console.log(`[CPCT Content Script] Verificando associação para requisição: ${msg.requestId}`);
+        
+        if (state.lastUserAction && 
+            (performance.now() - state.lastUserAction.preciseTimestamp) < CONFIG.REQUEST_ASSOCIATION_TIME) {
+          console.log(`[CPCT Content Script] Associando requisição ${msg.requestId} com última ação: ${state.lastUserAction.type}`);
+          msg.associatedUserAction = {
+            type: state.lastUserAction.type,
+            timestamp: state.lastUserAction.timestamp,
+            target: state.lastUserAction.target,
+            value: state.lastUserAction.value
+          };
+        } else {
+          console.log(`[CPCT Content Script] Nenhuma ação recente encontrada para associação com requisição ${msg.requestId}`);
+        }
+      }
+
+      try {
+        if (Utils.isExtensionContextValid()) {
+          console.log(`[CPCT Content Script] Encaminhando mensagem tipo ${msg.type} para script de background...`);
+          Communication.sendMessage({ action: "userAction", data: msg });
+
+          if (msg.type === "xhr" || msg.type === "fetch") {
+            state.lastRequestTime = Date.now();
+          }
+        } else {
+          console.warn(`[CPCT Content Script] Contexto da extensão inválido, mensagem tipo ${msg.type} não encaminhada.`);
+        }
+      } catch (error) {
+        console.error(`[CPCT Content Script] Erro ao encaminhar mensagem tipo ${msg.type} para background:`, error);
       }
     });
-  } catch (error) {
-    console.error("[CPCT Content Script] Error requesting correlation ID:", error);
-    eventCorrelationId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
-    lastCorrelationUpdateTime = Date.now();
   }
 }
 
-// Atualizar o ID de correlação periodicamente
-const correlationInterval = setInterval(() => {
-    if (!isExtensionContextValid()) {
-        clearInterval(correlationInterval);
-        return;
-    }
-    refreshCorrelationId();
-}, 15000);
+// ===================== INJEÇÃO DE SCRIPT =====================
 
-// Função para enviar ações do usuário (clicks, keys, etc.) para o background
-function sendUserActionWithCorrelation(action) {
-  if (!isExtensionContextValid()) {
-    console.warn("[CPCT Content Script] Attempting to send action with invalid context:", action.type);
-    return;
+class ScriptInjector {
+  static injectInterceptorFile() {
+    console.log("[CPCT Content Script] Tentando injetar script interceptor do arquivo...");
+    state.scriptInjectionAttempted = true;
+    
+    try {
+      const script = document.createElement("script");
+      script.src = chrome.runtime.getURL("interceptor.js");
+      
+      script.onload = function() {
+        console.log("[CPCT Content Script] Script interceptor carregado com sucesso (evento onload).");
+        this.remove();
+      };
+      
+      script.onerror = function(e) {
+        console.error("[CPCT Content Script] Falha ao carregar script interceptor do arquivo.", e);
+        if (Utils.isExtensionContextValid()) {
+          ActionTracker.sendUserActionWithCorrelation({
+            type: "diagnosticEvent",
+            event: "scriptInjectionFailed",
+            method: "fileLoad",
+            error: e ? (e.message || "Erro de carregamento desconhecido") : "Erro de carregamento desconhecido",
+            timestamp: new Date().toISOString()
+          });
+        }
+      };
+      
+      (document.head || document.documentElement).appendChild(script);
+    } catch (error) {
+      console.error("[CPCT Content Script] Erro ao criar ou anexar elemento de script interceptor:", error);
+      if (Utils.isExtensionContextValid()) {
+        ActionTracker.sendUserActionWithCorrelation({
+          type: "diagnosticEvent",
+          event: "scriptInjectionFailed",
+          method: "fileLoadSetup",
+          error: error ? error.message : "Erro de configuração desconhecido",
+          timestamp: new Date().toISOString()
+        });
+      }
+    }
   }
+}
 
-  try {
-    if (Date.now() - lastCorrelationUpdateTime > 15000) {
-      refreshCorrelationId();
-    }
+// ===================== MONITORAMENTO =====================
 
-    lastInteractionTime = Date.now();
-
-    action.correlationId = eventCorrelationId;
-    action.preciseTimestamp = performance.now();
-    action.timeFromPageLoad = action.preciseTimestamp - pageLoadTime;
-    action.pageContext = {
+class Monitor {
+  static extractPageMetadata() {
+    if (!Utils.isExtensionContextValid()) return;
+    console.log("[CPCT Content Script] Extraindo metadados da página...");
+    
+    const metadata = {
       title: document.title,
       url: window.location.href,
       referrer: document.referrer,
-      viewport: {
-        width: window.innerWidth,
-        height: window.innerHeight
-      },
-      userAgent: navigator.userAgent,
-      devicePixelRatio: window.devicePixelRatio || 1,
-      language: navigator.language,
-      hasFocus: focusState,
-      locationInfo: getLocationInfo(),
-      service: identifyGoogleService(),
-      view: identifyCurrentView()
+      charset: document.characterSet,
+      contentType: document.contentType,
+      language: document.documentElement.lang || navigator.language,
+      metaTags: Array.from(document.querySelectorAll("meta"))
+        .map(tag => ({ name: tag.name, content: tag.content })),
+      linkTags: Array.from(document.querySelectorAll("link"))
+        .map(tag => ({ rel: tag.rel, href: tag.href })),
+      scripts: Array.from(document.querySelectorAll("script"))
+        .map(tag => ({ src: tag.src })),
+      service: ServiceIdentifier.identifyGoogleService(),
+      view: ServiceIdentifier.identifyCurrentView()
     };
-
-    if (action.type !== "mouseMovement" && action.type !== "scroll") {
-        lastUserAction = {
-            type: action.type,
-            timestamp: action.timestamp,
-            preciseTimestamp: action.preciseTimestamp,
-            target: action.target ? {
-                tagName: action.target.tagName,
-                id: action.target.id,
-                classes: action.target.classes,
-                selector: action.target.selector
-            } : null,
-            value: action.value
-        };
-        console.log(`[CPCT Content Script] Updated lastUserAction: ${lastUserAction.type}`);
-    }
-
-    try {
-      if (performance && performance.memory) {
-        action.performanceData = {
-          memory: {
-            usedJSHeapSize: performance.memory.usedJSHeapSize,
-            totalJSHeapSize: performance.memory.totalJSHeapSize
-          }
-        };
-      }
-    } catch (e) { }
-
-    console.log(`[CPCT Content Script] Sending user action: ${action.type}`);
-
-    chrome.runtime.sendMessage({
-      action: "userAction",
-      data: action
-    }, function(response) {
-      if (chrome.runtime.lastError) {
-        console.warn(`[CPCT Content Script] Error sending userAction type ${action.type}:`, chrome.runtime.lastError.message);
-      }
-    });
-
-  } catch (error) {
-    console.error("[CPCT Content Script] Error in sendUserActionWithCorrelation:", error, action);
-    try {
-        if (isExtensionContextValid()) {
-            chrome.runtime.sendMessage({
-                action: "userAction",
-                data: {
-                    type: "internalContentScriptError",
-                    message: error.message,
-                    stack: error.stack,
-                    context: "sendUserActionWithCorrelation",
-                    failedActionType: action ? action.type : "unknown",
-                    timestamp: new Date().toISOString()
-                }
-            });
-        }
-    } catch (sendError) {
-        console.error("[CPCT Content Script] Failed to send internal error report:", sendError);
-    }
-  }
-}
-
-
-function setupEventListeners() {
-  console.log("[CPCT Content Script] Setting up event listeners...");
-
-  function getSelector(element) {
-      if (!element) return null;
-      if (element.id) return `#${element.id}`;
-      if (element.tagName === "BODY") return "BODY";
-
-      let path = "";
-      try {
-          while (element && element.parentElement && element.tagName !== "BODY") {
-              let siblingIndex = 1;
-              let sibling = element.previousElementSibling;
-              while (sibling) {
-                  if (sibling.tagName === element.tagName) {
-                      siblingIndex++;
-                  }
-                  sibling = sibling.previousElementSibling;
-              }
-              const tagName = element.tagName.toLowerCase();
-              const nthChild = `:nth-of-type(${siblingIndex})`;
-              path = ` > ${tagName}${nthChild}${path}`;
-              element = element.parentElement;
-          }
-          return element && element.tagName === "BODY" ? `BODY${path}`.trim() : null;
-      } catch (e) {
-          console.warn("[CPCT Content Script] Error generating selector:", e);
-          return null;
-      }
-  }
-
-  function getTargetInfo(element) {
-      if (!element) return null;
-      return {
-          tagName: element.tagName,
-          id: element.id || null,
-          classes: element.classList ? Array.from(element.classList) : [],
-          selector: getSelector(element),
-          name: element.name || null,
-          role: element.getAttribute("role") || null,
-          ariaLabel: element.getAttribute("aria-label") || null,
-          text: element.innerText ? element.innerText.substring(0, 100) : null
-      };
-  }
-
-  document.addEventListener("click", (event) => {
-    sendUserActionWithCorrelation({
-      type: "click",
-      target: getTargetInfo(event.target),
-      timestamp: new Date().toISOString(),
-      position: { x: event.clientX, y: event.clientY }
-    });
-  }, true);
-
-  let keyBuffer = "";
-  let keyTimer = null;
-  document.addEventListener("keydown", (event) => {
-    if (["Control", "Shift", "Alt", "Meta"].includes(event.key)) return;
-
-    const targetInfo = getTargetInfo(event.target);
-    let valueToLog = event.key;
-
-    const isSensitive = event.target.type === "password" || event.target.name?.toLowerCase().includes("password");
-    if (isSensitive) {
-        valueToLog = "***";
-    }
-
-    clearTimeout(keyTimer);
-    keyBuffer += valueToLog;
-    keyTimer = setTimeout(() => {
-        if (keyBuffer) {
-            sendUserActionWithCorrelation({
-                type: "keyInput",
-                target: targetInfo,
-                value: keyBuffer,
-                timestamp: new Date().toISOString()
-            });
-            keyBuffer = "";
-        }
-    }, 1000);
-
-    if (event.key === "Enter" || event.key === "Tab") {
-        clearTimeout(keyTimer); 
-        if (keyBuffer) {
-             sendUserActionWithCorrelation({
-                type: "keyInput",
-                target: targetInfo,
-                value: keyBuffer,
-                timestamp: new Date().toISOString()
-            });
-            keyBuffer = "";
-        }
-        sendUserActionWithCorrelation({
-            type: "keyDownSpecific",
-            target: targetInfo,
-            key: event.key,
-            code: event.code,
-            timestamp: new Date().toISOString()
-        });
-    }
-
-  }, true);
-
-  window.addEventListener("focus", () => {
-    focusState = true;
-    sendUserActionWithCorrelation({
-      type: "windowFocus",
+    
+    ActionTracker.sendUserActionWithCorrelation({
+      type: "pageMetadata",
+      data: metadata,
       timestamp: new Date().toISOString()
     });
-  }, true);
+  }
 
-  window.addEventListener("blur", () => {
-    focusState = false;
-    sendUserActionWithCorrelation({
-      type: "windowBlur",
-      timestamp: new Date().toISOString()
-    });
-  }, true);
-
-  let scrollTimer = null;
-  document.addEventListener("scroll", () => {
-    clearTimeout(scrollTimer);
-    scrollTimer = setTimeout(() => {
-      sendUserActionWithCorrelation({
-        type: "scroll",
-        scrollPosition: { x: window.scrollX, y: window.scrollY },
+  static sendMouseMovementData() {
+    if (state.mouseMoved && Utils.isExtensionContextValid()) {
+      ActionTracker.sendUserActionWithCorrelation({
+        type: "mouseMovement",
+        position: state.lastMousePosition,
         timestamp: new Date().toISOString()
       });
-    }, 500);
-  }, true);
-
-  document.addEventListener("change", (event) => {
-    const targetInfo = getTargetInfo(event.target);
-    let value = event.target.value;
-    const isSensitive = event.target.type === "password" || event.target.name?.toLowerCase().includes("password");
-    if (isSensitive) {
-        value = "***";
+      state.mouseMoved = false;
     }
-    sendUserActionWithCorrelation({
-      type: "change",
-      target: targetInfo,
-      value: value,
-      timestamp: new Date().toISOString()
+  }
+
+  static observeDOMChanges() {
+    if (!Utils.isExtensionContextValid()) return;
+    console.log("[CPCT Content Script] Configurando observador de DOM...");
+    
+    const observer = new MutationObserver((mutations) => {
+      // Lógica de manipulação de mutações pode ser adicionada aqui
     });
-  }, true);
 
-  window.addEventListener("error", (event) => {
-      sendUserActionWithCorrelation({
-          type: "pageError",
-          message: event.message,
-          filename: event.filename,
-          lineno: event.lineno,
-          colno: event.colno,
-          error: event.error ? { message: event.error.message, stack: event.error.stack } : null,
-          timestamp: new Date().toISOString()
-      });
-  });
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: false
+    });
+    
+    console.log("[CPCT Content Script] Observador de DOM ativo.");
+  }
 
-  window.addEventListener("unhandledrejection", (event) => {
-      sendUserActionWithCorrelation({
-          type: "pageError", // tratar erro da página
-          message: "Unhandled promise rejection",
-          reason: event.reason ? String(event.reason) : null,
-          timestamp: new Date().toISOString()
-      });
-  });
-
-  console.log("[CPCT Content Script] Event listeners set up.");
-}
-
-function extractPageMetadata() {
-  if (!isExtensionContextValid()) return;
-  console.log("[CPCT Content Script] Extracting page metadata...");
-  const metadata = {
-    title: document.title,
-    url: window.location.href,
-    referrer: document.referrer,
-    charset: document.characterSet,
-    contentType: document.contentType,
-    language: document.documentElement.lang || navigator.language,
-    metaTags: Array.from(document.querySelectorAll("meta")).map(tag => ({ name: tag.name, content: tag.content })),
-    linkTags: Array.from(document.querySelectorAll("link")).map(tag => ({ rel: tag.rel, href: tag.href })),
-    scripts: Array.from(document.querySelectorAll("script")).map(tag => ({ src: tag.src })),
-    service: identifyGoogleService(),
-    view: identifyCurrentView()
-  };
-  sendUserActionWithCorrelation({
-    type: "pageMetadata",
-    data: metadata,
-    timestamp: new Date().toISOString()
-  });
-}
-
-let lastMousePosition = { x: 0, y: 0 };
-let mouseMoved = false;
-document.addEventListener("mousemove", (event) => {
-    lastMousePosition = { x: event.clientX, y: event.clientY };
-    mouseMoved = true;
-}, { capture: true, passive: true });
-
-function sendMouseMovementData() {
-    if (mouseMoved && isExtensionContextValid()) {
-        sendUserActionWithCorrelation({
-            type: "mouseMovement",
-            position: lastMousePosition,
-            timestamp: new Date().toISOString()
-        });
-        mouseMoved = false; // Reseta flag
-    }
-}
-
-function observeDOMChanges() {
-  if (!isExtensionContextValid()) return;
-  console.log("[CPCT Content Script] Setting up DOM observer...");
-  const observer = new MutationObserver((mutations) => {
-  });
-
-  observer.observe(document.body, {
-    childList: true,
-    subtree: true,
-    attributes: false
-  });
-  console.log("[CPCT Content Script] DOM observer active.");
-}
-
-function setupDocumentContentCapture() {
-    if (!isExtensionContextValid()) return;
-    console.log("[CPCT Content Script] Setting up document content capture...");
-    const editorElement = document.querySelector("textarea.docs-texteventtarget-iframe") || document.body; // Adjust selector
+  static setupDocumentContentCapture() {
+    if (!Utils.isExtensionContextValid()) return;
+    console.log("[CPCT Content Script] Configurando captura de conteúdo do documento...");
+    
+    const editorElement = document.querySelector("textarea.docs-texteventtarget-iframe") || document.body;
 
     if (editorElement) {
-        const debouncedSendContent = debounce(() => {
-            if (documentChangeBuffer.length > 0 && isExtensionContextValid()) {
-                sendUserActionWithCorrelation({
-                    type: "documentContent",
-                    documentId: window.location.pathname,
-                    changes: documentChangeBuffer,
-                    timestamp: new Date().toISOString()
-                });
-                documentChangeBuffer = [];
-            }
-        }, 5000);
+      const debouncedSendContent = Utils.debounce(() => {
+        if (state.documentChangeBuffer.length > 0 && Utils.isExtensionContextValid()) {
+          ActionTracker.sendUserActionWithCorrelation({
+            type: "documentContent",
+            documentId: window.location.pathname,
+            changes: state.documentChangeBuffer,
+            timestamp: new Date().toISOString()
+          });
+          state.documentChangeBuffer = [];
+        }
+      }, CONFIG.DOCUMENT_CONTENT_DEBOUNCE);
 
-        editorElement.addEventListener("input", (event) => {
-            documentChangeBuffer.push({
-                type: "input",
-                timestamp: new Date().toISOString()
-            });
-            debouncedSendContent();
-        });
-
-        console.log("[CPCT Content Script] Document content capture active.");
-    } else {
-        console.warn("[CPCT Content Script] Editor element not found for content capture.");
-    }
-}
-
-function debounce(func, wait) {
-    let timeout;
-    return function executedFunction(...args) {
-        const later = () => {
-            clearTimeout(timeout);
-            func(...args);
-        };
-        clearTimeout(timeout);
-        timeout = setTimeout(later, wait);
-    };
-}
-
-function checkRequestDataCollection() {
-  if (!isExtensionContextValid()) return;
-  if (!lastRequestTime || Date.now() - lastRequestTime > 60000) { // 60 seconds
-    console.warn("[CPCT Content Script] No requests (XHR/Fetch) detected in the last minute.");
-
-    // Try to verify background communication
-    verifyBackgroundCommunication();
-
-    // If injection failed initially, maybe retry?
-    if (scriptInjectionAttempted && !scriptInjectedSuccessfully) {
-        console.log("[CPCT Content Script] Retrying interceptor script injection...");
-        injectInterceptorFile(); // Use the file injection method now
-    }
-
-    // Send diagnostic event
-    sendUserActionWithCorrelation({
-      type: "diagnosticEvent",
-      event: "noRequestsDetected",
-      details: `Last request time: ${lastRequestTime ? new Date(lastRequestTime).toISOString() : "Never"}`,
-      timestamp: new Date().toISOString()
-    });
-  }
-}
-
-// --- Utility Functions ---
-
-// Identify Google service based on URL
-function identifyGoogleService() {
-  const host = window.location.hostname;
-  const path = window.location.pathname;
-
-  if (host.includes("mail.google.com")) return "Gmail";
-  if (host.includes("drive.google.com")) return "Google Drive";
-  if (host.includes("docs.google.com")) return "Google Docs";
-  if (host.includes("sheets.google.com")) return "Google Sheets";
-  if (host.includes("slides.google.com")) return "Google Slides";
-  if (host.includes("calendar.google.com")) return "Google Calendar";
-  if (host.includes("meet.google.com")) return "Google Meet";
-  if (host.includes("photos.google.com")) return "Google Photos";
-  if (host.includes("contacts.google.com")) return "Google Contacts";
-  if (host.includes("keep.google.com")) return "Google Keep";
-  if (host.includes("youtube.com")) return "YouTube";
-  if (host.includes("google.com") && path.includes("/maps")) return "Google Maps";
-  if (host.includes("google.com") && (path === "/" || path.startsWith("/search") || path.startsWith("/webhp"))) return "Google Search";
-
-  return "Other Google Service";
-}
-
-// Identify current view within a service
-function identifyCurrentView() {
-  const url = window.location.href;
-  const path = window.location.pathname;
-  const hash = window.location.hash;
-
-  // Gmail
-  if (url.includes("mail.google.com")) {
-    if (hash.startsWith("#inbox")) return "Inbox";
-    if (hash.startsWith("#sent")) return "Sent";
-    if (hash.startsWith("#drafts")) return "Drafts";
-    if (hash.match(/#label\/[^\/]+/)) return "Label View";
-    if (hash.match(/#search\/.+/)) return "Search Results";
-    if (hash.match(/#[^\/]+\/[^\/]+/)) return "Email Read View";
-    return "Gmail - Other";
-  }
-
-  // Drive
-  if (url.includes("drive.google.com")) {
-    if (url.includes("/drive/my-drive")) return "My Drive";
-    if (url.includes("/drive/shared-with-me")) return "Shared with me";
-    if (url.includes("/drive/recent")) return "Recent";
-    if (url.includes("/drive/starred")) return "Starred";
-    if (url.includes("/drive/trash")) return "Trash";
-    if (url.includes("/drive/folders/")) return "Folder View";
-    if (url.includes("/drive/search")) return "Search Results";
-    return "Drive - Other";
-  }
-
-  // Docs, Sheets, Slides
-  if (url.includes("docs.google.com") || url.includes("sheets.google.com") || url.includes("slides.google.com")) {
-    if (path.includes("/edit")) return "Edit Mode";
-    if (path.includes("/view") || path.includes("/preview")) return "View Mode";
-    if (path.includes("/copy")) return "Copy Document";
-    if (path.match(/\/d\/[^\/]+\/?$/) || path.match(/\/d\/[^\/]+\/$/)) return "Edit Mode";
-    return "Document/Sheet/Slide - Other";
-  }
-
-  // Calendar
-  if (url.includes("calendar.google.com")) {
-      if (url.includes("/day")) return "Day View";
-      if (url.includes("/week")) return "Week View";
-      if (url.includes("/month")) return "Month View";
-      if (url.includes("/year")) return "Year View";
-      if (url.includes("/agenda")) return "Agenda View";
-      if (url.includes("/eventedit")) return "Event Edit";
-      return "Calendar - Other";
-  }
-
-  // Google Search
-  if (url.includes("google.com/search") || url.includes("google.com/webhp")) {
-      const params = new URLSearchParams(window.location.search);
-      if (params.get("tbm") === "isch") return "Image Search";
-      if (params.get("tbm") === "vid") return "Video Search";
-      if (params.get("tbm") === "nws") return "News Search";
-      if (params.get("tbm") === "shop") return "Shopping Search";
-      return "Web Search Results";
-  }
-
-  return "Default View";
-}
-
-// Get location info
-function getLocationInfo() {
-  try {
-    const url = new URL(window.location.href);
-    return {
-      protocol: url.protocol,
-      hostname: url.hostname,
-      pathname: url.pathname,
-      search: url.search,
-      hash: url.hash
-    };
-  } catch (e) {
-    return { raw: window.location.href };
-  }
-}
-
-// --- Initialization Function ---
-function initialize() {
-  if (!isExtensionContextValid()) {
-    console.error("[CPCT Content Script] Context invalid at initialization. Aborting.");
-    return;
-  }
-
-  // Target specific domains
-  if (!window.location.hostname.endsWith("google.com") && !window.location.hostname.endsWith("youtube.com")) {
-    console.log("CPCT Data Safe: Not a target domain. Script inactive.");
-    return;
-  }
-
-  console.log("CPCT Data Safe: Content script initializing on", window.location.hostname);
-
-  // Initial verification of background communication
-  verifyBackgroundCommunication();
-
-  pageLoadTime = performance.now();
-  focusState = document.hasFocus();
-
-  // Send initialization event after a short delay
-  setTimeout(() => {
-    try {
-      if (isExtensionContextValid()) {
-        sendUserActionWithCorrelation({
-          type: "contentScriptInitialized",
+      editorElement.addEventListener("input", (event) => {
+        state.documentChangeBuffer.push({
+          type: "input",
           timestamp: new Date().toISOString()
         });
+        debouncedSendContent();
+      });
+
+      console.log("[CPCT Content Script] Captura de conteúdo do documento ativa.");
+    } else {
+      console.warn("[CPCT Content Script] Elemento editor não encontrado para captura de conteúdo.");
+    }
+  }
+
+  static checkRequestDataCollection() {
+    if (!Utils.isExtensionContextValid()) return;
+    
+    if (!state.lastRequestTime || Date.now() - state.lastRequestTime > CONFIG.REQUEST_CHECK_INTERVAL) {
+      console.warn("[CPCT Content Script] Nenhuma requisição (XHR/Fetch) detectada no último minuto.");
+
+      Communication.verifyBackgroundCommunication();
+
+      if (state.scriptInjectionAttempted && !state.scriptInjectedSuccessfully) {
+        console.log("[CPCT Content Script] Retentando injeção do script interceptor...");
+        ScriptInjector.injectInterceptorFile();
       }
-    } catch (e) {
-      console.error("[CPCT Content Script] Error sending initialization event:", e);
-    }
-  }, 1000);
 
-  // Set up core event listeners
-  try {
-    setupEventListeners();
-  } catch (e) {
-    console.error("[CPCT Content Script] Error setting up event listeners:", e);
-  }
-
-  // Extract metadata after a delay
-  try {
-    setTimeout(extractPageMetadata, 2000);
-  } catch (e) {
-    console.error("[CPCT Content Script] Error scheduling metadata extraction:", e);
-  }
-
-  // Set up periodic tasks
-  const mouseMovementInterval = setInterval(() => {
-    if (!isExtensionContextValid()) { clearInterval(mouseMovementInterval); return; }
-    try { sendMouseMovementData(); } catch (e) { console.error("Error sending mouse movement:", e); }
-  }, 5000);
-
-  const cleanupInterval = setInterval(() => {
-    if (!isExtensionContextValid()) { clearInterval(cleanupInterval); return; }
-  }, 30000);
-
-  const requestCheckInterval = setInterval(() => {
-      if (!isExtensionContextValid()) { clearInterval(requestCheckInterval); return; }
-      try { checkRequestDataCollection(); } catch (e) { console.error("Error checking request collection:", e); }
-  }, 60000);
-
-  // Set up features requiring specific page context
-  if (window.location.hostname.includes("docs.google.com") ||
-      window.location.hostname.includes("sheets.google.com") ||
-      window.location.hostname.includes("slides.google.com")) {
-    try {
-      setTimeout(setupDocumentContentCapture, 3000);
-    } catch (e) {
-      console.error("Error scheduling document content capture:", e);
+      ActionTracker.sendUserActionWithCorrelation({
+        type: "diagnosticEvent",
+        event: "noRequestsDetected",
+        details: `Último horário de requisição: ${state.lastRequestTime ? new Date(state.lastRequestTime).toISOString() : "Nunca"}`,
+        timestamp: new Date().toISOString()
+      });
     }
   }
-
-  // Monitor DOM changes
-  try {
-    observeDOMChanges();
-  } catch (e) {
-    console.error("Error setting up DOM observer:", e);
-  }
-
-  console.log("CPCT Data Safe: Content script initialization complete.");
 }
 
+// ===================== INICIALIZAÇÃO =====================
+
+class App {
+  static initialize() {
+    if (!Utils.isExtensionContextValid()) {
+      console.error("[CPCT Content Script] Contexto inválido na inicialização. Abortando.");
+      return;
+    }
+
+    // Verifica se estamos em um domínio alvo
+    const hostname = window.location.hostname;
+    const isTargetDomain = CONFIG.GOOGLE_DOMAINS.some(domain => 
+      hostname.endsWith(domain)
+    );
+
+    if (!isTargetDomain) {
+      console.log("CPCT Data Safe: Não é um domínio alvo. Script inativo.");
+      return;
+    }
+
+    console.log("CPCT Data Safe: Content script inicializando em", hostname);
+
+    // Configuração inicial
+    Communication.verifyBackgroundCommunication();
+    state.pageLoadTime = performance.now();
+    state.focusState = document.hasFocus();
+
+    // Injeta script interceptor
+    ScriptInjector.injectInterceptorFile();
+
+    // Configura listeners de eventos
+    EventHandlers.setupEventListeners();
+    EventHandlers.setupMessageListener();
+
+    // Agenda evento de inicialização
+    setTimeout(() => {
+      try {
+        if (Utils.isExtensionContextValid()) {
+          ActionTracker.sendUserActionWithCorrelation({
+            type: "contentScriptInitialized",
+            timestamp: new Date().toISOString()
+          });
+        }
+      } catch (e) {
+        console.error("[CPCT Content Script] Erro ao enviar evento de inicialização:", e);
+      }
+    }, CONFIG.INITIALIZATION_DELAY);
+
+    // Agenda extração de metadados
+    setTimeout(() => Monitor.extractPageMetadata(), CONFIG.METADATA_EXTRACTION_DELAY);
+
+    // Configura intervalos
+    this.setupIntervals();
+
+    // Configura recursos específicos de documento
+    this.setupDocumentFeatures();
+
+    // Inicia observação do DOM
+    Monitor.observeDOMChanges();
+
+    console.log("CPCT Data Safe: Inicialização do content script completa.");
+  }
+
+  static setupIntervals() {
+    // Atualização do ID de correlação
+    setInterval(() => {
+      if (!Utils.isExtensionContextValid()) return;
+      Communication.refreshCorrelationId();
+    }, CONFIG.CORRELATION_UPDATE_INTERVAL);
+
+    // Relatório de movimento do mouse
+    setInterval(() => {
+      if (!Utils.isExtensionContextValid()) return;
+      try { Monitor.sendMouseMovementData(); } 
+      catch (e) { console.error("Erro ao enviar movimento do mouse:", e); }
+    }, CONFIG.MOUSE_MOVEMENT_INTERVAL);
+
+    // Intervalo de limpeza
+    setInterval(() => {
+      if (!Utils.isExtensionContextValid()) return;
+      // Lógica de limpeza pode ser adicionada aqui
+    }, CONFIG.CLEANUP_INTERVAL);
+
+    // Monitoramento de requisições
+    setInterval(() => {
+      if (!Utils.isExtensionContextValid()) return;
+      try { Monitor.checkRequestDataCollection(); } 
+      catch (e) { console.error("Erro ao verificar coleta de requisições:", e); }
+    }, CONFIG.REQUEST_CHECK_INTERVAL);
+  }
+
+  static setupDocumentFeatures() {
+    const hostname = window.location.hostname;
+    const documentEditors = ['docs.google.com', 'sheets.google.com', 'slides.google.com'];
+    
+    if (documentEditors.some(editor => hostname.includes(editor))) {
+      setTimeout(() => {
+        try {
+          Monitor.setupDocumentContentCapture();
+        } catch (e) {
+          console.error("Erro ao agendar captura de conteúdo do documento:", e);
+        }
+      }, CONFIG.DOCUMENT_CAPTURE_DELAY);
+    }
+  }
+}
+
+// Inicia a aplicação
+App.initialize();

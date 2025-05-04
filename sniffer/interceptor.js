@@ -1,225 +1,218 @@
 (() => {
-  console.log("[CPCT Interceptor] !!! interceptor.js script STARTING !!!");
-  // Check if already injected
+  console.log("[CPCT Interceptor] !!! script interceptor.js INICIANDO !!!");
+  
   if (window.__CPCT_INTERCEPTOR_INJECTED__) {
-    console.log("[CPCT Interceptor] Already injected. Skipping.");
+    console.log("[CPCT Interceptor] Já injetado. Pulando.");
     return;
   }
+  
   window.__CPCT_INTERCEPTOR_INJECTED__ = true;
+  console.log("[CPCT Interceptor] Script rodando no contexto da página.");
 
-  console.log("[CPCT Interceptor] Script running in page context.");
-
-  // Helper to generate a unique ID for requests
-  function generateRequestId() {
+  function gerarIdRequisicao() {
     return "req_" + Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
   }
 
-  // Helper to check if a request URL is relevant (e.g., not extension or data endpoint)
-  function isRelevantRequest(url) {
-      // ADDED LOG
-      console.log(`[CPCT Interceptor] isRelevantRequest checking URL: ${url ? url.substring(0,100) : "undefined"}...`);
-      if (!url) return false; // Ignore undefined URLs
-      try {
-          const parsedUrl = new URL(url);
-          // Ignore requests made by the extension itself
-          if (parsedUrl.protocol === "chrome-extension:") {
-              console.log("[CPCT Interceptor] isRelevantRequest: false (chrome-extension)");
-              return false;
-          }
-          // Ignore requests to the data endpoint (if defined and matches)
-          // const dataEndpointHostname = "localhost"; // Example: Define your data endpoint hostname
-          // if (parsedUrl.hostname === dataEndpointHostname) {
-          //     console.log("[CPCT Interceptor] isRelevantRequest: false (data endpoint)");
-          //     return false;
-          // }
-      } catch (e) {
-          console.warn(`[CPCT Interceptor] isRelevantRequest: Error parsing URL '${url}'. Treating as relevant.`, e);
-          // Invalid URL? Treat as relevant for now, might need refinement
-          return true;
+  function isRequisicaoRelevante(url) {
+    console.log(`[CPCT Interceptor] isRequisicaoRelevante verificando URL: ${url ? url.substring(0, 100) : "indefinido"}...`);
+    
+    if (!url) return false;
+    
+    try {
+      const urlParseada = new URL(url);
+      if (urlParseada.protocol === "chrome-extension:") {
+        console.log("[CPCT Interceptor] isRequisicaoRelevante: false (chrome-extension)");
+        return false;
       }
-      console.log("[CPCT Interceptor] isRelevantRequest: true");
+    } catch (e) {
+      console.warn(`[CPCT Interceptor] isRequisicaoRelevante: Erro ao parsear URL '${url}'. Tratando como relevante.`, e);
       return true;
+    }
+    
+    console.log("[CPCT Interceptor] isRequisicaoRelevante: true");
+    return true;
   }
 
+  // Intercepta Fetch
   const _fetch = window.fetch;
   window.fetch = function(input, init) {
     const url = (input instanceof Request) ? input.url : String(input);
-    const method = (init?.method || (input instanceof Request && input.method) || "GET").toUpperCase();
+    const metodo = (init?.method || (input instanceof Request && input.method) || "GET").toUpperCase();
 
-    // ADDED LOG
-    console.log(`[CPCT Interceptor] Intercepted fetch: ${method} ${url ? url.substring(0, 100) : "undefined"}...`);
+    console.log(`[CPCT Interceptor] Fetch interceptado: ${metodo} ${url ? url.substring(0, 100) : "indefinido"}...`);
 
-    // Ignore irrelevant requests early
-    if (!isRelevantRequest(url)) {
-        console.log(`[CPCT Interceptor] Fetch ignored (irrelevant): ${method} ${url ? url.substring(0, 100) : "undefined"}...`);
-        return _fetch.apply(this, arguments);
+    if (!isRequisicaoRelevante(url)) {
+      console.log(`[CPCT Interceptor] Fetch ignorado (irrelevante): ${metodo} ${url ? url.substring(0, 100) : "indefinido"}...`);
+      return _fetch.apply(this, arguments);
     }
 
-    const requestId = generateRequestId();
-    const start = performance.now();
+    const idRequisicao = gerarIdRequisicao();
+    const inicio = performance.now();
 
-    console.log(`[CPCT Interceptor] Fetch started (relevant): ${requestId} ${method} ${url.substring(0, 100)}...`);
+    console.log(`[CPCT Interceptor] Fetch iniciado (relevante): ${idRequisicao} ${metodo} ${url.substring(0, 100)}...`);
 
     return _fetch.apply(this, arguments).then(response => {
-      const duration = performance.now() - start;
-      console.log(`[CPCT Interceptor] Fetch completed: ${requestId} Status: ${response.status}`);
-      // Clone the response to read body without consuming original
+      const duracao = performance.now() - inicio;
+      console.log(`[CPCT Interceptor] Fetch completado: ${idRequisicao} Status: ${response.status}`);
+      
       const clone = response.clone();
       clone.text().then(body => {
-        // ADDED LOG
-        console.log(`[CPCT Interceptor] Posting fetch success message: ${requestId}`);
+        console.log(`[CPCT Interceptor] Enviando mensagem de sucesso do fetch: ${idRequisicao}`);
         window.postMessage({
           __CPCT__: true,
           type: "fetch",
-          requestId, url, method,
+          requestId: idRequisicao,
+          url,
+          method: metodo,
           statusCode: response.status,
-          duration,
+          duration: duracao,
           timestamp: new Date().toISOString(),
-          // responseBody: body // Optional: Consider size implications
         }, "*");
-      }).catch(err => {
-         console.warn(`[CPCT Interceptor] Error reading fetch response body for ${requestId}`, err);
-         // ADDED LOG
-         console.log(`[CPCT Interceptor] Posting fetch success message (body read error): ${requestId}`);
-         window.postMessage({
+      }).catch(erro => {
+        console.warn(`[CPCT Interceptor] Erro ao ler corpo da resposta do fetch para ${idRequisicao}`, erro);
+        console.log(`[CPCT Interceptor] Enviando mensagem de sucesso do fetch (erro ao ler corpo): ${idRequisicao}`);
+        window.postMessage({
           __CPCT__: true,
-          type: "fetch", // Still report as fetch, but note body error
-          requestId, url, method,
+          type: "fetch",
+          requestId: idRequisicao,
+          url,
+          method: metodo,
           statusCode: response.status,
-          duration,
+          duration: duracao,
           timestamp: new Date().toISOString(),
-          bodyReadError: err.message
+          bodyReadError: erro.message
         }, "*");
       });
-      return response; // Return the original response
-    }).catch(error => {
-      const duration = performance.now() - start;
-      console.error(`[CPCT Interceptor] Fetch error: ${requestId}`, error);
-      // ADDED LOG
-      console.log(`[CPCT Interceptor] Posting fetch error message: ${requestId}`);
+      
+      return response;
+    }).catch(erro => {
+      const duracao = performance.now() - inicio;
+      console.error(`[CPCT Interceptor] Erro no fetch: ${idRequisicao}`, erro);
+      console.log(`[CPCT Interceptor] Enviando mensagem de erro do fetch: ${idRequisicao}`);
+      
       window.postMessage({
         __CPCT__: true,
         type: "fetchError",
-        requestId, url, method,
+        requestId: idRequisicao,
+        url,
+        method: metodo,
         statusCode: 0,
-        error: error.message,
-        duration,
+        error: erro.message,
+        duration: duracao,
         timestamp: new Date().toISOString(),
       }, "*");
-      throw error; // Re-throw the error
+      
+      throw erro;
     });
   };
 
+  // Intercepta XHR
   const _XHR = window.XMLHttpRequest;
   window.XMLHttpRequest = function() {
     const xhr = new _XHR();
-    const requestId = generateRequestId();
-    let start, method, url;
+    const idRequisicao = gerarIdRequisicao();
+    let inicio, metodo, url;
 
-    // ADDED LOG
-    console.log(`[CPCT Interceptor] XMLHttpRequest created: ${requestId}`);
+    console.log(`[CPCT Interceptor] XMLHttpRequest criado: ${idRequisicao}`);
 
-    const origOpen = xhr.open;
+    const openOriginal = xhr.open;
     xhr.open = function(m, u, ...args) {
-      method = m.toUpperCase();
+      metodo = m.toUpperCase();
       url = u;
-      // ADDED LOG
-      console.log(`[CPCT Interceptor] XHR opened: ${requestId} ${method} ${url ? url.substring(0, 100) : "undefined"}...`);
-      // Check relevance here? If not relevant, maybe skip adding listeners?
-      // For now, check relevance before posting message.
-      start = performance.now();
-      return origOpen.apply(this, [m, u, ...args]);
+      console.log(`[CPCT Interceptor] XHR aberto: ${idRequisicao} ${metodo} ${url ? url.substring(0, 100) : "indefinido"}...`);
+      inicio = performance.now();
+      return openOriginal.apply(this, [m, u, ...args]);
     };
 
-    const origSend = xhr.send;
+    const sendOriginal = xhr.send;
     xhr.send = function(body) {
-      // ADDED LOG
-      console.log(`[CPCT Interceptor] XHR send called: ${requestId}`);
-      // Can capture request body here if needed
-      return origSend.apply(this, [body]);
+      console.log(`[CPCT Interceptor] XHR send chamado: ${idRequisicao}`);
+      return sendOriginal.apply(this, [body]);
     };
 
     xhr.addEventListener("loadend", () => {
-      // ADDED LOG
-      console.log(`[CPCT Interceptor] XHR loadend event: ${requestId} Status: ${xhr.status}`);
-      // Check relevance before posting
-      if (!isRelevantRequest(url)) {
-          console.log(`[CPCT Interceptor] XHR ignored (irrelevant): ${requestId} ${method} ${url ? url.substring(0, 100) : "undefined"}...`);
-          return;
+      console.log(`[CPCT Interceptor] Evento loadend do XHR: ${idRequisicao} Status: ${xhr.status}`);
+      
+      if (!isRequisicaoRelevante(url)) {
+        console.log(`[CPCT Interceptor] XHR ignorado (irrelevante): ${idRequisicao} ${metodo} ${url ? url.substring(0, 100) : "indefinido"}...`);
+        return;
       }
 
-      // loadend fires for success and error (status != 0)
-      if (xhr.status !== 0) { // Only report if not a network error (which fires "error")
-          const duration = performance.now() - start;
-          console.log(`[CPCT Interceptor] XHR completed: ${requestId} Status: ${xhr.status}`);
-          // ADDED LOG
-          console.log(`[CPCT Interceptor] Posting xhr success message: ${requestId}`);
-          window.postMessage({
-            __CPCT__: true,
-            type: "xhr",
-            requestId, url, method,
-            statusCode: xhr.status,
-            duration,
-            timestamp: new Date().toISOString(),
-            // responseText: xhr.responseText // Optional: Consider size
-          }, "*");
+      if (xhr.status !== 0) {
+        const duracao = performance.now() - inicio;
+        console.log(`[CPCT Interceptor] XHR completado: ${idRequisicao} Status: ${xhr.status}`);
+        console.log(`[CPCT Interceptor] Enviando mensagem de sucesso do xhr: ${idRequisicao}`);
+        
+        window.postMessage({
+          __CPCT__: true,
+          type: "xhr",
+          requestId: idRequisicao,
+          url,
+          method: metodo,
+          statusCode: xhr.status,
+          duration: duracao,
+          timestamp: new Date().toISOString(),
+        }, "*");
       }
     });
 
     xhr.addEventListener("error", () => {
-      // ADDED LOG
-      console.log(`[CPCT Interceptor] XHR error event: ${requestId}`);
-      if (!isRelevantRequest(url)) {
-          console.log(`[CPCT Interceptor] XHR error ignored (irrelevant): ${requestId}`);
-          return;
+      console.log(`[CPCT Interceptor] Evento de erro do XHR: ${idRequisicao}`);
+      
+      if (!isRequisicaoRelevante(url)) {
+        console.log(`[CPCT Interceptor] Erro do XHR ignorado (irrelevante): ${idRequisicao}`);
+        return;
       }
-      const duration = performance.now() - start;
-      console.error(`[CPCT Interceptor] XHR error: ${requestId}`);
-      // ADDED LOG
-      console.log(`[CPCT Interceptor] Posting xhr error message: ${requestId}`);
+      
+      const duracao = performance.now() - inicio;
+      console.error(`[CPCT Interceptor] Erro no XHR: ${idRequisicao}`);
+      console.log(`[CPCT Interceptor] Enviando mensagem de erro do xhr: ${idRequisicao}`);
+      
       window.postMessage({
         __CPCT__: true,
         type: "xhrError",
-        requestId, url, method,
-        statusCode: 0, // Status 0 usually indicates network error
-        error: "Network Error or CORS issue",
-        duration,
+        requestId: idRequisicao,
+        url,
+        method: metodo,
+        statusCode: 0,
+        error: "Erro de Rede ou problema de CORS",
+        duration: duracao,
         timestamp: new Date().toISOString(),
       }, "*");
     });
 
     xhr.addEventListener("timeout", () => {
-        // ADDED LOG
-        console.log(`[CPCT Interceptor] XHR timeout event: ${requestId}`);
-        if (!isRelevantRequest(url)) {
-            console.log(`[CPCT Interceptor] XHR timeout ignored (irrelevant): ${requestId}`);
-            return;
-        }
-        const duration = performance.now() - start;
-        console.error(`[CPCT Interceptor] XHR timeout: ${requestId}`);
-        // ADDED LOG
-        console.log(`[CPCT Interceptor] Posting xhr timeout error message: ${requestId}`);
-        window.postMessage({
-            __CPCT__: true,
-            type: "xhrError",
-            requestId, url, method,
-            statusCode: 0, // Or a specific code for timeout?
-            error: "Request timed out",
-            duration,
-            timestamp: new Date().toISOString(),
-        }, "*");
+      console.log(`[CPCT Interceptor] Evento de timeout do XHR: ${idRequisicao}`);
+      
+      if (!isRequisicaoRelevante(url)) {
+        console.log(`[CPCT Interceptor] Timeout do XHR ignorado (irrelevante): ${idRequisicao}`);
+        return;
+      }
+      
+      const duracao = performance.now() - inicio;
+      console.error(`[CPCT Interceptor] Timeout no XHR: ${idRequisicao}`);
+      console.log(`[CPCT Interceptor] Enviando mensagem de erro de timeout do xhr: ${idRequisicao}`);
+      
+      window.postMessage({
+        __CPCT__: true,
+        type: "xhrError",
+        requestId: idRequisicao,
+        url,
+        method: metodo,
+        statusCode: 0,
+        error: "Requisição expirou (timeout)",
+        duration: duracao,
+        timestamp: new Date().toISOString(),
+      }, "*");
     });
 
     return xhr;
   };
 
-  // Inform the content script that the injection was successful
-  // ADDED LOG
-  console.log("[CPCT Interceptor] Posting scriptInjected message.");
+  console.log("[CPCT Interceptor] Enviando mensagem scriptInjected.");
   window.postMessage({
     __CPCT__: true,
     type: "scriptInjected",
     timestamp: new Date().toISOString()
   }, "*");
-})(); // IIFE ends here
-
+})();
