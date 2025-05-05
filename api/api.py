@@ -32,7 +32,7 @@ app.config.update({
     'API_TOKENS': {
         "12345abcde": {"user": "admin", "role": "admin"},
         "abcd123": {"user": "cpct_extension", "role": "extension"},
-        "your-api-key-here": {"user": "sniffer_extension", "role": "extension"}
+        "40028922": {"user": "sniffer_extension", "role": "extension"}
     }
 })
 
