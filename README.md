@@ -61,7 +61,7 @@ Visualização simplificada:
 3. **Interceptor.js**: coleta dados de rede.
 4. **background.js**: recebe informações, CRIPTOGRAFA e armazena temporariamente (Cache)
 5. **Comunicação Interna**: `interceptor.js` envia mensagens para o Content Script; em seguida, o Background Script dispara chamadas para a API (dados já criptografados).
-6. **API**: recebe dados criptografados, DESCRIPTOGRAFA, gera logs JSON e atualiza CSV (sem coluna 'content').
+6. **API**: recebe dados criptografados, DESCRIPTOGRAFA, gera logs JSON e atualiza CSV.
 
 ---
 
@@ -180,7 +180,7 @@ O **`interceptor.js`** é injetado no contexto da página para monitorar chamada
 1. **Clonar repositório**:
 
    ```bash
-   git clone https://github.com/seu-usuario/CPCTDataSafe.git
+   git clone https://github.com/CPCTdevs/CPCTDataSafe.git
    ```
 
 2. **API**:
@@ -212,17 +212,23 @@ O **`interceptor.js`** é injetado no contexto da página para monitorar chamada
 ```
 CPCTDataSafe/
 ├─ api/
-│  ├─ server.py         # Entrypoint da API
-│  ├─ models.py         # Schemas e validação (pydantic)
-│  ├─ storage/          # Lógica de gravação JSON e CSV
-│  └─ requirements.txt  # Dependências Python
+│  ├─ api.py           # Servidor API e lógica principal
+│  ├─ requirements.txt # Dependências Python
+│  ├─ api_server.log   # Logs do servidor
+│  ├─ keys/           # Diretório com chave RSA privada
+│  └─ utils/          # Utilitários e funções auxiliares
 ├─ sniffer/
-   ├─ manifest.json     # Definições da extensão Chrome
-   ├─ config.js         # Endpoint e chaves da API
-   ├─ content-script.js # Injeção de interceptor e listener
-   ├─ interceptor.js    # Monkey-patch de fetch/XHR
-   ├─ background.js     # Agregação e envio de dados
-   └─ popup/            # UI (HTML, CSS, JS)
+│  ├─ manifest.json    # Definições da extensão Chrome
+│  ├─ config.js        # Configurações (endpoint e chaves)
+│  ├─ content-script.js # Injeção de interceptor e listener
+│  ├─ interceptor.js   # Monkey-patch de fetch/XHR
+│  ├─ background.js    # Agregação e envio de dados
+│  ├─ package.json     # Dependências e scripts npm
+│  ├─ keys/           # Diretório com chave RSA publica
+│  ├─ utils/          # Utilitários e funções auxiliares
+│  ├─ images/         # Recursos visuais
+│  └─ popup/          # Interface do usuário (HTML, CSS, JS)
+|─ Static/            # Recursos estáticos (imagens, diagramas)
 ```
 
 **Tipos de Dados**
