@@ -1,6 +1,6 @@
 # CPCTDataSafe
 
-Inspirada no projeto da IBM [user-test-logger](https://github.com/IBM/user-test-logger).
+Fork do projeto da IBM [user-test-logger](https://github.com/IBM/user-test-logger).
 
 ---
 
