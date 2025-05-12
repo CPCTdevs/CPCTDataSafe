@@ -2,3 +2,5 @@ api/data
 api/user_csvs
 api/venv
 api/api_server.log
+api/keys
+sniffer/keys

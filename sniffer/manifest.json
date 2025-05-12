@@ -25,7 +25,7 @@
     },
   "web_accessible_resources": [
     {
-      "resources": ["unload-collector.html", "utils/*", "config.js", "interceptor.js"],
+      "resources": ["unload-collector.html", "utils/*", "config.js", "interceptor.js", "keys/*"],
       "matches": ["*://*.google.com/*"]
     }
   ]

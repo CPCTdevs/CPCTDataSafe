@@ -46,6 +46,49 @@ class AppState {
 
 const state = new AppState();
 
+// ===================== FILTRO DE DADOS SENSÍVEIS (BRASIL) =====================
+
+const SENSITIVE_REGEXES = [
+  /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, // Email
+  /(?:(?:\+55\s?)?(?:\(?[1-9][0-9]\)?)[\s-]?)?(?:9?[678]\d{3})[-\s]?(\d{4})/g, // Telefone
+  /\d{3}\.\d{3}\.\d{3}-\d{2}/g, // CPF
+  /\d{11}/g, // CPF sem pontuação
+  /\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}/g, // CNPJ
+  /\d{14}/g, // CNPJ sem pontuação
+  /(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|3(?:0[0-5]|[68][0-9])[0-9]{11}|6(?:011|5[0-9]{2})[0-9]{12}|(?:2131|1800|35\d{3})\d{11})/g, // Cartão de crédito
+  /^[A-Z]{3}-\d{4}$/g, // Placa antiga
+  /^[A-Z]{3}[0-9][A-Z][0-9]{2}$/g, // Placa Mercosul
+  /\d{5}-?\d{3}/g, // CEP
+  /[0-9]{1,2}\.?[0-9]{3}\.?[0-9]{3}-?[0-9Xx]/g, // RG
+  /^(0[1-9]|[12][0-9]|3[01])\/(0[1-9]|1[0-2])\/[0-9]{4}$/g // Data de nascimento
+];
+
+function sanitizeString(str) {
+  let sanitized = String(str);
+  SENSITIVE_REGEXES.forEach(regex => {
+    sanitized = sanitized.replace(regex, '***');
+  });
+  return sanitized;
+}
+
+function sanitizeObject(obj) {
+  if (obj === null || obj === undefined) return obj;
+  if (typeof obj === 'string' || typeof obj === 'number' || typeof obj === 'boolean') {
+    return sanitizeString(obj);
+  } else if (Array.isArray(obj)) {
+    return obj.map(sanitizeObject);
+  } else if (typeof obj === 'object') {
+    const newObj = {};
+    for (const key in obj) {
+      if (Object.prototype.hasOwnProperty.call(obj, key)) {
+        newObj[key] = sanitizeObject(obj[key]);
+      }
+    }
+    return newObj;
+  }
+  return obj;
+}
+
 // ===================== FUNÇÕES UTILITÁRIAS =====================
 
 class Utils {
@@ -336,8 +379,10 @@ class ActionTracker {
 
       state.lastInteractionTime = Date.now();
 
+      const sanitizedAction = sanitizeObject(action);
+
       const enrichedAction = {
-        ...action,
+        ...sanitizedAction,
         correlationId: state.eventCorrelationId,
         preciseTimestamp: performance.now(),
         timeFromPageLoad: performance.now() - state.pageLoadTime,
@@ -359,13 +404,13 @@ class ActionTracker {
         }
       };
 
-      if (action.type !== "mouseMovement" && action.type !== "scroll") {
+      if (sanitizedAction.type !== "mouseMovement" && sanitizedAction.type !== "scroll") {
         state.lastUserAction = {
-          type: action.type,
-          timestamp: action.timestamp,
+          type: sanitizedAction.type,
+          timestamp: sanitizedAction.timestamp,
           preciseTimestamp: enrichedAction.preciseTimestamp,
-          target: action.target,
-          value: action.value
+          target: sanitizedAction.target,
+          value: sanitizedAction.value
         };
         console.log(`[CPCT Content Script] Atualizado lastUserAction: ${state.lastUserAction.type}`);
       }
@@ -381,7 +426,7 @@ class ActionTracker {
         }
       } catch (e) {}
 
-      console.log(`[CPCT Content Script] Enviando ação do usuário: ${action.type}`);
+      console.log(`[CPCT Content Script] Enviando ação do usuário: ${sanitizedAction.type}`);
       Communication.sendMessage({ action: "userAction", data: enrichedAction });
 
     } catch (error) {
@@ -720,10 +765,29 @@ class Monitor {
     if (editorElement) {
       const debouncedSendContent = Utils.debounce(() => {
         if (state.documentChangeBuffer.length > 0 && Utils.isExtensionContextValid()) {
+          // Google Sheets: concatena texto de células editáveis
+          const sheetsCells = document.querySelectorAll('.cell-input, .cell-input-edit, .cell-input-field, .cell-input__input');
+          if (sheetsCells && sheetsCells.length > 0) {
+            let contentText = Array.from(sheetsCells).map(cell => cell.innerText).join('\n');
+          } else {
+            // Outros: pega de textareas e contenteditables visíveis
+            const textareas = Array.from(document.querySelectorAll('textarea'));
+            const editables = Array.from(document.querySelectorAll('[contenteditable="true"]'));
+            const allInputs = [...textareas, ...editables];
+            contentText = allInputs
+              .filter(el => el.offsetParent !== null && el.value !== undefined ? el.value.trim() : el.innerText && el.innerText.trim())
+              .map(el => el.value !== undefined ? el.value : el.innerText)
+              .join('\n');
+            // fallback para editorElement
+            if (!contentText && editorElement && editorElement.innerText) {
+              contentText = editorElement.innerText;
+            }
+          }
           ActionTracker.sendUserActionWithCorrelation({
             type: "documentContent",
             documentId: window.location.pathname,
             changes: state.documentChangeBuffer,
+            content: contentText,
             timestamp: new Date().toISOString()
           });
           state.documentChangeBuffer = [];
@@ -876,3 +940,27 @@ class App {
 
 // Inicia a aplicação
 App.initialize();
+
+// Garante que todos os envios passem pelo filtro
+const originalSendUserActionWithCorrelation = ActionTracker.sendUserActionWithCorrelation;
+ActionTracker.sendUserActionWithCorrelation = function(action) {
+  const sanitized = sanitizeObject(action);
+  console.log('[CPCT DEBUG] Dados sanitizados antes do envio:', sanitized);
+  return originalSendUserActionWithCorrelation.call(this, sanitized);
+};
+
+// --- NOVO: Sanitizar mensagens do interceptor.js ---
+const originalWindowAddEventListener = window.addEventListener;
+window.addEventListener = function(type, listener, options) {
+  if (type === 'message') {
+    const wrappedListener = function(event) {
+      if (event && event.data && event.data.__CPCT__) {
+        // Sanitiza profundamente a mensagem do interceptor
+        event.data = sanitizeObject(event.data);
+      }
+      return listener(event);
+    };
+    return originalWindowAddEventListener.call(this, type, wrappedListener, options);
+  }
+  return originalWindowAddEventListener.call(this, type, listener, options);
+};

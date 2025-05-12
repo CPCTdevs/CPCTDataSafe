@@ -1,10 +1,10 @@
 // @ts-nocheck
 // ==================== IMPORTAÇÃO DE CONFIGURAÇÕES ====================
 try {
-  importScripts('config.js');
-  console.log("config.js carregado com sucesso");
+  importScripts('config.js', 'utils/encryption.js');
+  console.log("config.js e encryption.js carregados com sucesso");
 } catch (e) {
-  console.error("Erro ao carregar config.js:", e);
+  console.error("Erro ao carregar config.js ou encryption.js:", e);
   // Fallback para valores padrão
   globalThis.API_ENDPOINT = "http://localhost:5000/data";
   globalThis.API_KEY = "12345abcde";
@@ -15,7 +15,8 @@ const DATA_SEND_INTERVAL = 60000; // 1 minuto
 const MAX_PENDING_DATA_COUNT = 100; // Enviar quando atingir este número
 const CLEANUP_INTERVAL = 3600000; // 1 hora (limpar dados com mais de 24h)
 const LOGIN_CHECK_INTERVAL = 300000; // 5 minutos
-const DIAGNOSTIC_INTERVAL = 30000; // 30 segundos
+const API_HEALTH_CHECK_INTERVAL = 300000; // 5 minutos
+const DIAGNOSTIC_INTERVAL = 300000; // 5 minutos
 
 // ==================== VARIÁVEIS GLOBAIS ====================
 let lastUploadAttempt = null;
@@ -24,6 +25,7 @@ let apiStatus = { online: false, lastCheck: null, error: null };
 let lastDataSendTime = Date.now();
 let pendingDataCount = 0;
 let isInitialized = false;
+let healthCheckTimer = null;
 
 // Armazenamento de dados coletados
 let cpctData = {
@@ -470,11 +472,8 @@ function setupPeriodicTasks() {
     }
   }, DIAGNOSTIC_INTERVAL);
 
-  // Verificação do status da API periodicamente
-  setInterval(() => {
-    if (!isExtensionContextValid()) return;
-    checkApiStatus();
-  }, 30000); // Verificar a cada 30 segundos
+  // Iniciar verificação de saúde da API
+  startApiHealthCheck();
 }
 
 // ==================== MANIPULAÇÃO DE DADOS ====================
@@ -482,8 +481,27 @@ function generateCorrelationId() {
   return Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
 }
 
-function handleUserAction(action, tab) {
-  console.log("[Background] handleUserAction - Recebido tipo:", action?.type, " | Dados:", JSON.stringify(action));
+async function encryptActionData(action) {
+  try {
+    // Criptografa os dados sensíveis da ação
+    const encryptedData = await Encryption.encryptData(action);
+    
+    // Retorna um objeto com os dados criptografados e metadados necessários
+    return {
+      type: action.type,
+      timestamp: action.timestamp,
+      userId: action.userId,
+      tabId: action.tabId,
+      encryptedData: encryptedData
+    };
+  } catch (error) {
+    console.error("[Background] Erro ao criptografar dados:", error);
+    throw error;
+  }
+}
+
+async function handleUserAction(action, tab) {
+  console.log("[Background] handleUserAction - Recebido tipo:", action?.type);
   
   if (!action || typeof action !== "object" || !action.type) {
     console.warn("[Background] handleUserAction - Recebida ação inválida ou sem tipo:", action);
@@ -506,52 +524,60 @@ function handleUserAction(action, tab) {
   let dataStored = false;
   let storedIn = "";
 
-  if (action.type === "xhr" || action.type === "fetch" || 
-      action.type === "xhrError" || action.type === "fetchError" ||
-      action.type === "request" || action.type === "requestError") {
-    cpctData.requests.push(action);
-    storedIn = "requests";
-    dataStored = true;
-  } else if (action.type === "header") {
-    cpctData.headers.push(action);
-    storedIn = "headers";
-    dataStored = true;
-  } else if (action.type === "documentContent") {
-    cpctData.documentContents.push(action);
-    storedIn = "documentContents";
-    dataStored = true;
-  } else if (action.type === "pageMetadata") {
-    cpctData.metadata.push(action);
-    storedIn = "metadata";
-    dataStored = true;
-  } else if (action.type === "pageError" || action.type === "internalContentScriptError") {
-    cpctData.errors.push(action);
-    storedIn = "errors";
-    dataStored = true;
-  } else if (action.type === "scriptInjected" || action.type === "contentScriptInitialized" || action.type === "diagnosticEvent") {
-    cpctData.userActions.push(action);
-    storedIn = "userActions (system)";
-    dataStored = true;
-  } else {
-    cpctData.userActions.push(action);
-    storedIn = "userActions (interaction)";
-    dataStored = true;
+  try {
+    // Criptografa os dados antes de armazenar
+    const encryptedAction = await encryptActionData(action);
+
+    if (action.type === "xhr" || action.type === "fetch" || 
+        action.type === "xhrError" || action.type === "fetchError" ||
+        action.type === "request" || action.type === "requestError") {
+      cpctData.requests.push(encryptedAction);
+      storedIn = "requests";
+      dataStored = true;
+    } else if (action.type === "header") {
+      cpctData.headers.push(encryptedAction);
+      storedIn = "headers";
+      dataStored = true;
+    } else if (action.type === "documentContent") {
+      cpctData.documentContents.push(encryptedAction);
+      storedIn = "documentContents";
+      dataStored = true;
+    } else if (action.type === "pageMetadata") {
+      cpctData.metadata.push(encryptedAction);
+      storedIn = "metadata";
+      dataStored = true;
+    } else if (action.type === "pageError" || action.type === "internalContentScriptError") {
+      cpctData.errors.push(encryptedAction);
+      storedIn = "errors";
+      dataStored = true;
+    } else if (action.type === "scriptInjected" || action.type === "contentScriptInitialized" || action.type === "diagnosticEvent") {
+      cpctData.userActions.push(encryptedAction);
+      storedIn = "userActions (system)";
+      dataStored = true;
+    } else {
+      cpctData.userActions.push(encryptedAction);
+      storedIn = "userActions (interaction)";
+      dataStored = true;
+    }
+    
+    if (dataStored) {
+      pendingDataCount++;
+      console.log(`[Background] handleUserAction - Ação tipo '${action.type}' armazenada em '${storedIn}'. Pending: ${pendingDataCount}`);
+    } else {
+      console.warn(`[Background] handleUserAction - Ação tipo '${action.type}' não foi armazenada.`);
+    }
+    
+    if (dataStored && isInitialized && 
+        (pendingDataCount >= MAX_PENDING_DATA_COUNT || Date.now() - lastDataSendTime > DATA_SEND_INTERVAL)) {
+      console.log(`[Background] Disparando envio por handleUserAction (Count: ${pendingDataCount}, Time since last: ${Date.now() - lastDataSendTime}ms)`);
+      sendDataToServer();
+    }
+    
+    return { status: "received" };
+  } catch (error) {
+    console.error("[Background] Erro ao processar ação:", error);
+    return { status: "error", message: "Erro ao processar ação" };
   }
-  
-  if (dataStored) {
-    pendingDataCount++;
-    console.log(`[Background] handleUserAction - Ação tipo '${action.type}' armazenada em '${storedIn}'. Pending: ${pendingDataCount}`);
-  } else {
-    console.warn(`[Background] handleUserAction - Ação tipo '${action.type}' não foi armazenada.`);
-  }
-  
-  if (dataStored && isInitialized && 
-      (pendingDataCount >= MAX_PENDING_DATA_COUNT || Date.now() - lastDataSendTime > DATA_SEND_INTERVAL)) {
-    console.log(`[Background] Disparando envio por handleUserAction (Count: ${pendingDataCount}, Time since last: ${Date.now() - lastDataSendTime}ms)`);
-    sendDataToServer();
-  }
-  
-  return { status: "received" };
 }
 
 // ==================== ENVIO DE DADOS ====================
@@ -651,6 +677,7 @@ async function sendDataToServer(forceUpload = false) {
   try {
     console.log(`[Background] Enviando ${totalItems} itens para API: ${API_ENDPOINT} (Usuário: ${effectiveUserId})`);
     
+    // Não precisamos criptografar novamente, pois os dados já estão criptografados
     const response = await fetch(API_ENDPOINT, {
       method: "POST",
       headers: {
@@ -671,7 +698,7 @@ async function sendDataToServer(forceUpload = false) {
     
     lastUploadSuccess = true;
     notifyPopup("uploadComplete", { success: true, timestamp: lastUploadAttempt, itemCount: totalItems });
-    return { success: true, itemCount: totalItems };
+    return { success: true, itemCount: totalItems, message: "Dados enviados com sucesso" };
 
   } catch (error) {
     console.error("[Background] Erro ao enviar dados:", error);
@@ -914,7 +941,77 @@ async function checkApiStatus() {
   return apiStatus;
 }
 
+function startApiHealthCheck() {
+  // Limpar timer existente se houver
+  if (healthCheckTimer) {
+    clearInterval(healthCheckTimer);
+  }
+  
+  // Fazer verificação inicial
+  checkApiStatus();
+  
+  // Configurar verificação periódica
+  healthCheckTimer = setInterval(checkApiStatus, API_HEALTH_CHECK_INTERVAL);
+}
+
+async function addRequest(request) {
+    try {
+        // Validação básica
+        if (!request || !request.url || !request.timestamp) {
+            console.error('Requisição inválida:', request);
+            return;
+        }
+
+        // Criptografa os dados antes de armazenar
+        const encryptedData = await Encryption.encryptData(JSON.stringify(request));
+        
+        // Armazena os dados criptografados
+        cpctData.requests.push({
+            ...request,
+            encryptedData: encryptedData
+        });
+
+        // Salva backup local
+        await saveBackup();
+        
+        // Verifica se deve enviar
+        if (shouldSendData()) {
+            await sendDataToServer();
+        }
+    } catch (error) {
+        console.error('Erro ao adicionar requisição:', error);
+    }
+}
+
+async function addUserAction(action) {
+    try {
+        // Validação básica
+        if (!action || !action.type || !action.timestamp) {
+            console.error('Ação inválida:', action);
+            return;
+        }
+
+        // Criptografa os dados antes de armazenar
+        const encryptedData = await Encryption.encryptData(JSON.stringify(action));
+        
+        // Armazena os dados criptografados
+        cpctData.userActions.push({
+            ...action,
+            encryptedData: encryptedData
+        });
+
+        // Salva backup local
+        await saveBackup();
+        
+        // Verifica se deve enviar
+        if (shouldSendData()) {
+            await sendDataToServer();
+        }
+    } catch (error) {
+        console.error('Erro ao adicionar ação:', error);
+    }
+}
+
 // ==================== INICIALIZAÇÃO DO SCRIPT ====================
 initializeBackgroundScript();
-// Verificar status da API imediatamente na inicialização
-checkApiStatus();
+// A verificação inicial da API agora é feita dentro de startApiHealthCheck()

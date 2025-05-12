@@ -11,6 +11,11 @@ import pandas as pd # Import pandas
 from pathlib import Path # Use pathlib for path manipulation
 import re
 import threading # To run CSV processing in background (optional but good practice)
+from concurrent.futures import ThreadPoolExecutor
+from utils.decryption import Decryption
+from queue import Queue, Empty
+from collections import defaultdict
+import time
 
 app = Flask(__name__)
 
@@ -26,14 +31,22 @@ CORS(app,
 # Configurações da aplicação
 app.config.update({
     'MAX_CONTENT_LENGTH': 50 * 1024 * 1024,  # 50MB
-    'DATA_FOLDER': Path('data'), # Pasta para salvar JSONs originais (opcional)
-    'CSV_OUTPUT_FOLDER': Path('user_csvs'), # Pasta para salvar CSVs processados
+    'DATA_FOLDER': Path('data'),
+    'CSV_OUTPUT_FOLDER': Path('user_csvs'),
     'API_VERSION': 'v1',
     'API_TOKENS': {
         "12345abcde": {"user": "admin", "role": "admin"},
         "abcd123": {"user": "cpct_extension", "role": "extension"},
         "40028922": {"user": "sniffer_extension", "role": "extension"}
-    }
+    },
+    'MIN_WORKERS': 4,  # Mínimo de threads para garantir paralelismo
+    'MAX_WORKERS': 8,  # Máximo de threads para processamento
+    'USERS_PER_THREAD': 30,  # Número de usuários processados por thread
+    'BATCH_SIZE': 20,  # Tamanho do lote por usuário
+    'PROCESSING_TIMEOUT': 600,  # Timeout de 10 minutos para processamento
+    'CLEANUP_INTERVAL': 3600,  # Limpeza a cada 1 hora
+    'MAX_RETRIES': 3,  # Número máximo de tentativas para processar um arquivo
+    'RETRY_DELAY': 5  # Tempo de espera entre tentativas (segundos)
 })
 
 # Configuração de logging
@@ -50,6 +63,175 @@ logger = logging.getLogger(__name__)
 # Garantir pastas de dados e CSV
 app.config['DATA_FOLDER'].mkdir(exist_ok=True)
 app.config['CSV_OUTPUT_FOLDER'].mkdir(exist_ok=True)
+
+# Initialize decryption utility
+decryption = Decryption()
+
+# Sistema de fila e processamento
+file_queue = Queue()  # Removido limite máximo
+user_file_mapping = defaultdict(list)
+file_processing_lock = threading.Lock()
+user_locks = defaultdict(threading.Lock)
+thread_pool = ThreadPoolExecutor(max_workers=app.config['MAX_WORKERS'])
+last_cleanup = datetime.now()
+failed_files = defaultdict(list)  # Armazena arquivos que falharam para retry
+
+def retry_failed_files():
+    """Tenta processar novamente arquivos que falharam anteriormente."""
+    global failed_files
+    if not failed_files:
+        return
+
+    logger.info(f"Tentando processar {sum(len(files) for files in failed_files.values())} arquivos que falharam anteriormente")
+    
+    for user_id, files in list(failed_files.items()):
+        for file_info in files[:]:  # Copia da lista para permitir remoção durante iteração
+            try:
+                # Adicionar à fila principal novamente
+                file_queue.put(file_info)
+                files.remove(file_info)
+                logger.info(f"Arquivo {file_info.get('json_filename', 'unknown')} readicionado à fila")
+            except Exception as e:
+                logger.error(f"Erro ao readicionar arquivo à fila: {e}")
+    
+    # Limpar usuários sem arquivos pendentes
+    failed_files = {k: v for k, v in failed_files.items() if v}
+
+def process_user_batch(users_batch):
+    """Processa um lote de usuários em uma thread."""
+    start_time = datetime.now()
+    logger.info(f"Iniciando processamento de lote com {len(users_batch)} usuários")
+    
+    try:
+        for user_id, user_data in users_batch.items():
+            username = user_data['username']
+            files = user_data['files']
+            
+            try:
+                # Usar lock específico do usuário com timeout
+                if user_locks[user_id].acquire(timeout=5):
+                    try:
+                        logger.info(f"Processando {len(files)} arquivos para usuário {username}")
+                        
+                        for file_info in files:
+                            retry_count = 0
+                            success = False
+                            
+                            while not success and retry_count < app.config['MAX_RETRIES']:
+                                try:
+                                    json_filename = file_info['json_filename']
+                                    data_rows = file_info['data_rows']
+                                    
+                                    # Atualizar CSV do usuário
+                                    update_user_csv(user_id, username, data_rows, json_filename)
+                                    
+                                    # Registrar arquivo no mapeamento do usuário
+                                    user_file_mapping[user_id].append(json_filename)
+                                    
+                                    success = True
+                                    file_queue.task_done()
+                                    logger.info(f"Arquivo {json_filename} processado com sucesso")
+                                    
+                                except Exception as e:
+                                    retry_count += 1
+                                    if retry_count < app.config['MAX_RETRIES']:
+                                        logger.warning(f"Tentativa {retry_count} falhou para arquivo {file_info.get('json_filename', 'unknown')}: {e}")
+                                        time.sleep(app.config['RETRY_DELAY'])
+                                    else:
+                                        logger.error(f"Todas as tentativas falharam para arquivo {file_info.get('json_filename', 'unknown')}")
+                                        # Adicionar à lista de falhas para retry posterior
+                                        failed_files[user_id].append(file_info)
+                                        file_queue.task_done()
+                        
+                    finally:
+                        user_locks[user_id].release()
+                else:
+                    logger.warning(f"Timeout ao tentar obter lock para usuário {username}")
+                    # Adicionar arquivos à lista de falhas
+                    failed_files[user_id].extend(files)
+                    for _ in files:
+                        file_queue.task_done()
+            
+            except Exception as e:
+                logger.error(f"Erro no processamento do usuário {username}: {e}")
+                # Adicionar arquivos à lista de falhas
+                failed_files[user_id].extend(files)
+                for _ in files:
+                    file_queue.task_done()
+        
+        # Tentar processar arquivos que falharam
+        retry_failed_files()
+        
+    except Exception as e:
+        logger.error(f"Erro no processamento do lote: {e}")
+    
+    logger.info(f"Finalizado processamento do lote com {len(users_batch)} usuários em {(datetime.now() - start_time).total_seconds()} segundos")
+
+def process_file_queue():
+    """Processa a fila de arquivos em background, agrupando por usuário e distribuindo entre threads."""
+    user_batches = defaultdict(lambda: {'username': None, 'files': []})
+    current_batch = {}
+    batch_count = 0
+    
+    while True:
+        try:
+            # Coletar arquivos da fila
+            while True:  # Loop infinito para processar todos os itens
+                try:
+                    file_info = file_queue.get(timeout=1)  # Timeout de 1 segundo
+                    user_id = file_info['user_id']
+                    username = file_info['username']
+                    
+                    # Inicializar dados do usuário se necessário
+                    if user_id not in user_batches:
+                        user_batches[user_id]['username'] = username
+                    
+                    # Adicionar arquivo ao lote do usuário
+                    user_batches[user_id]['files'].append(file_info)
+                    
+                    # Se atingiu o tamanho do lote para este usuário
+                    if len(user_batches[user_id]['files']) >= app.config['BATCH_SIZE']:
+                        # Adicionar ao lote atual
+                        current_batch[user_id] = user_batches[user_id]
+                        user_batches[user_id] = {'username': username, 'files': []}
+                        
+                        # Se atingiu o número máximo de usuários por thread
+                        if len(current_batch) >= app.config['USERS_PER_THREAD']:
+                            # Submeter para processamento em thread separada
+                            thread_pool.submit(process_user_batch, current_batch.copy())
+                            current_batch = {}
+                            batch_count += 1
+                            logger.info(f"Submetido lote #{batch_count} para processamento")
+                
+                except Empty:  # Usando Empty ao invés de Queue.Empty
+                    # Processar TODOS os lotes pendentes em user_batches
+                    if user_batches:
+                        # converte cada usuário em um lote próprio
+                        for user_id, info in user_batches.items():
+                            single_batch = { user_id: info }
+                            thread_pool.submit(process_user_batch, single_batch)
+                            batch_count += 1
+                            logger.info(f"Submetido lote final #{batch_count} (user {user_id}) para processamento")
+                        user_batches.clear()
+                    
+                    # Também limpa qualquer current_batch por precaução
+                    if current_batch:
+                        thread_pool.submit(process_user_batch, current_batch.copy())
+                        batch_count += 1
+                        logger.info(f"Submetido lote final #{batch_count} para processamento")
+                        current_batch = {}
+                    break
+            
+            # Pausa curta para evitar uso excessivo de CPU
+            threading.Event().wait(0.1)  # 100ms
+            
+        except Exception as e:
+            logger.error(f"Erro no processamento da fila: {e}")
+            threading.Event().wait(1)
+
+# Iniciar thread de processamento da fila
+queue_processor = threading.Thread(target=process_file_queue, daemon=True)
+queue_processor.start()
 
 # --- Funções Auxiliares para Processamento CSV ---
 
@@ -68,6 +250,10 @@ def extract_data_from_json(data, source_filename="api_request"):
         logger.warning(f"userId ou username ausente nos dados recebidos. Pulando processamento CSV.")
         return [], None, None # Retorna lista vazia e None para user_id/username
 
+    # Gerar nome do arquivo JSON
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    json_filename = f"api_data_{timestamp}_{uuid.uuid4().hex[:6]}.json"
+    
     rows = []
 
     # Processar userActions
@@ -93,8 +279,7 @@ def extract_data_from_json(data, source_filename="api_request"):
             'requestMethod': None,
             'requestStatusCode': None,
             'requestId': None,
-            'content': None,
-            'sourceFile': source_filename
+            'sourceFile': json_filename
         }
         rows.append(row)
 
@@ -121,8 +306,7 @@ def extract_data_from_json(data, source_filename="api_request"):
             'requestMethod': req.get('method'),
             'requestStatusCode': req.get('statusCode'),
             'requestId': req.get('requestId'),
-            'content': None,
-            'sourceFile': source_filename
+            'sourceFile': json_filename
         }
         rows.append(row)
 
@@ -149,14 +333,13 @@ def extract_data_from_json(data, source_filename="api_request"):
             'requestMethod': None,
             'requestStatusCode': None,
             'requestId': None,
-            'content': content_item.get('content'),
-            'sourceFile': source_filename
+            'sourceFile': json_filename
         }
         rows.append(row)
 
     return rows, user_id, username
 
-def update_user_csv(user_id, username, new_data_rows):
+def update_user_csv(user_id, username, new_data_rows, json_filename):
     """Atualiza ou cria o arquivo CSV para um usuário específico."""
     if not user_id or not username or not new_data_rows:
         logger.warning("Dados insuficientes para atualizar CSV (userId, username ou dados ausentes).")
@@ -168,58 +351,96 @@ def update_user_csv(user_id, username, new_data_rows):
     output_path = output_folder / csv_filename
 
     logger.info(f"Preparando para atualizar CSV para usuário '{username}' ({user_id}) em {output_path}")
+    logger.info(f"Número de linhas a processar: {len(new_data_rows)}")
 
-    df_new = pd.DataFrame(new_data_rows)
+    try:
+        # Criar DataFrame apenas com os novos dados
+        df_new = pd.DataFrame(new_data_rows)
+        logger.info(f"DataFrame criado com {len(df_new)} linhas")
+        
+        # Adicionar coluna com nome do arquivo JSON
+        df_new['sourceFile'] = json_filename
 
-    # Garantir colunas e ordem
-    expected_cols = [
-        'userId', 'username', 'uploadTimestamp', 'eventType', 'actionType',
-        'timestamp', 'correlationId', 'url', 'pageTitle', 'target_tagName',
-        'target_selector', 'target_text', 'inputValue', 'keyPressed',
-        'scrollX', 'scrollY', 'requestUrl', 'requestMethod',
-        'requestStatusCode', 'requestId', 'content', 'sourceFile'
-    ]
-    for col in expected_cols:
-        if col not in df_new.columns:
-            df_new[col] = None
-    df_new = df_new[expected_cols]
+        # Garantir colunas e ordem
+        expected_cols = [
+            'userId', 'username', 'uploadTimestamp', 'eventType', 'actionType',
+            'timestamp', 'correlationId', 'url', 'pageTitle', 'target_tagName',
+            'target_selector', 'target_text', 'inputValue', 'keyPressed',
+            'scrollX', 'scrollY', 'requestUrl', 'requestMethod',
+            'requestStatusCode', 'requestId', 'sourceFile'
+        ]
+        for col in expected_cols:
+            if col not in df_new.columns:
+                df_new[col] = None
+        df_new = df_new[expected_cols]
 
-    df_to_save = pd.DataFrame()
+        # Lock para evitar condição de corrida
+        with file_processing_lock:
+            try:
+                if output_path.exists():
+                    logger.info(f"Lendo CSV existente: {output_path}")
+                    try:
+                        # Ler apenas as últimas 1000 linhas do CSV existente para melhor performance
+                        df_existing = pd.read_csv(output_path, nrows=1000)
+                        logger.info(f"CSV existente lido com {len(df_existing)} linhas")
+                        
+                        # Concatenar e ordenar
+                        df_combined = pd.concat([df_existing, df_new], ignore_index=True)
+                        df_to_save = df_combined.sort_values(by='timestamp').reset_index(drop=True)
+                        logger.info(f"Combinado {len(df_existing)} registros existentes com {len(df_new)} novos")
+                    except pd.errors.EmptyDataError:
+                        logger.warning(f"CSV existente {output_path} está vazio. Sobrescrevendo.")
+                        df_to_save = df_new.sort_values(by='timestamp').reset_index(drop=True)
+                    except Exception as read_err:
+                        logger.error(f"Erro ao ler CSV existente {output_path}: {read_err}. Tentando salvar apenas novos dados.")
+                        df_to_save = df_new.sort_values(by='timestamp').reset_index(drop=True)
+                else:
+                    logger.info(f"CSV não existente. Criando novo arquivo: {output_path}")
+                    df_to_save = df_new.sort_values(by='timestamp').reset_index(drop=True)
 
-    # Lock para evitar condição de corrida se a API for muito concorrida (simplificado)
-    # Uma solução mais robusta usaria bloqueio de arquivo ou um banco de dados.
-    lock = threading.Lock()
-    with lock:
-        try:
-            if output_path.exists():
-                logger.debug(f"Lendo CSV existente: {output_path}")
+                # Salvar
+                if not df_to_save.empty:
+                    # Salvar em chunks para melhor performance
+                    chunk_size = 1000
+                    total_rows = len(df_to_save)
+                    
+                    for i in range(0, total_rows, chunk_size):
+                        chunk = df_to_save.iloc[i:i + chunk_size]
+                        mode = 'w' if i == 0 else 'a'
+                        header = i == 0
+                        chunk.to_csv(output_path, mode=mode, header=header, index=False, encoding='utf-8')
+                        logger.info(f"Salvando chunk {i//chunk_size + 1} de {(total_rows + chunk_size - 1)//chunk_size}")
+                    
+                    logger.info(f"CSV salvo com sucesso para {user_id} em {output_path}")
+                else:
+                    logger.warning(f"Nenhum dado para salvar para o usuário {user_id} após processamento.")
+
+            except Exception as e:
+                logger.error(f"Erro GERAL ao processar/salvar CSV para {user_id} em {output_path}: {e}")
+                raise
+
+    except Exception as e:
+        logger.error(f"Erro ao processar dados para CSV: {e}")
+        raise
+
+def deep_decrypt_fields(data, decryption):
+    """Percorre recursivamente o dicionário/lista e descriptografa campos 'encryptedData'."""
+    if isinstance(data, dict):
+        new_data = {}
+        for k, v in data.items():
+            if k == 'encryptedData' and isinstance(v, dict) and 'chunks' in v:
                 try:
-                    df_existing = pd.read_csv(output_path)
-                    df_combined = pd.concat([df_existing, df_new], ignore_index=True)
-                    logger.debug(f"Combinado {len(df_existing)} registros existentes com {len(df_new)} novos.")
-                    # Ordenar e remover duplicatas (opcional, mas recomendado)
-                    df_to_save = df_combined.sort_values(by='timestamp').reset_index(drop=True)
-                    # Exemplo de remoção de duplicatas (ajuste as colunas conforme necessário)
-                    # df_to_save = df_to_save.drop_duplicates(subset=['timestamp', 'eventType', 'correlationId', 'requestId', 'actionType'], keep='last')
-                except pd.errors.EmptyDataError:
-                    logger.warning(f"CSV existente {output_path} está vazio. Sobrescrevendo.")
-                    df_to_save = df_new.sort_values(by='timestamp').reset_index(drop=True)
-                except Exception as read_err:
-                    logger.error(f"Erro ao ler CSV existente {output_path}: {read_err}. Tentando salvar apenas novos dados.")
-                    df_to_save = df_new.sort_values(by='timestamp').reset_index(drop=True)
+                    new_data = decryption.decrypt_data(v)
+                except Exception as e:
+                    new_data = {'decryptionError': str(e), 'original': v}
+                return new_data  # substitui o próprio dicionário pelo conteúdo descriptografado
             else:
-                logger.debug(f"CSV não existente. Criando novo arquivo: {output_path}")
-                df_to_save = df_new.sort_values(by='timestamp').reset_index(drop=True)
-
-            # Salvar
-            if not df_to_save.empty:
-                df_to_save.to_csv(output_path, index=False, encoding='utf-8')
-                logger.info(f"CSV salvo com sucesso para {user_id} em {output_path}")
-            else:
-                logger.warning(f"Nenhum dado para salvar para o usuário {user_id} após processamento.")
-
-        except Exception as e:
-            logger.error(f"Erro GERAL ao processar/salvar CSV para {user_id} em {output_path}: {e}")
+                new_data[k] = deep_decrypt_fields(v, decryption)
+        return new_data
+    elif isinstance(data, list):
+        return [deep_decrypt_fields(item, decryption) for item in data]
+    else:
+        return data
 
 # --- Endpoints da API ---
 
@@ -336,58 +557,70 @@ def simple_save_data():
             logger.warning(f"Token inválido na requisição para /data: {token[:5]}...")
             return jsonify({"error": "Token de API inválido"}), 403
 
-        data = request.get_json()
-        if not data:
+        encrypted_data = request.get_json()
+        if not encrypted_data:
             logger.warning("Dados JSON ausentes na requisição para /data")
             return jsonify({"error": "Dados JSON ausentes"}), 400
 
-        # --- Processamento CSV Integrado --- 
-        source_filename = f"api_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json" # Nome para referência
-        new_data_rows, user_id, username = extract_data_from_json(data, source_filename)
+        # Gerar nome do arquivo JSON UMA ÚNICA VEZ
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        json_filename = f"api_data_{timestamp}_{uuid.uuid4().hex[:6]}.json"
+
+        # Decrypt the data
+        try:
+            if isinstance(encrypted_data, dict) and 'encryptedData' in encrypted_data:
+                encrypted_data = encrypted_data['encryptedData']
+            
+            decrypted_data = decryption.decrypt_data(encrypted_data)
+            decrypted_data = deep_decrypt_fields(decrypted_data, decryption)
+        except Exception as decrypt_error:
+            logger.error(f"Erro ao descriptografar dados: {str(decrypt_error)}")
+            return jsonify({"error": "Erro ao descriptografar dados"}), 400
+
+        # Extrair dados para CSV
+        new_data_rows, user_id, username = extract_data_from_json(decrypted_data, json_filename)
 
         if user_id and username and new_data_rows:
-            # Executar em background para não bloquear a resposta da API
-            # Nota: Para produção, considere usar um sistema de filas (Celery, RQ)
-            csv_thread = threading.Thread(target=update_user_csv, args=(user_id, username, new_data_rows))
-            csv_thread.start()
-            logger.info(f"Processamento CSV iniciado em background para usuário {user_id}")
+            # Adicionar à fila de processamento
+            file_info = {
+                'user_id': user_id,
+                'username': username,
+                'json_filename': json_filename,
+                'data_rows': new_data_rows
+            }
+            file_queue.put(file_info)
+            logger.info(f"Dados adicionados à fila de processamento para usuário {user_id}")
         else:
-            logger.warning("Não foi possível iniciar o processamento CSV devido a dados ausentes.")
-        # --- Fim do Processamento CSV Integrado ---
+            logger.warning("Não foi possível adicionar dados à fila devido a dados ausentes.")
 
-        # Opcional: Salvar o JSON original também
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        user_info = app.config['API_TOKENS'][token]
-        safe_user = user_info['user'].replace(" ", "_")
-        filename = f"api_data_{timestamp}_{uuid.uuid4().hex[:6]}.json"
-        filepath = app.config['DATA_FOLDER'] / filename
+        # Salvar o JSON descriptografado
+        filepath = app.config['DATA_FOLDER'] / json_filename
         try:
             with open(filepath, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
-            logger.info(f"JSON original salvo em {filepath}")
+                json.dump(decrypted_data, f, indent=2, ensure_ascii=False)
+            logger.info(f"JSON descriptografado salvo em {filepath}")
         except Exception as save_err:
-            logger.error(f"Erro ao salvar JSON original {filepath}: {save_err}")
+            logger.error(f"Erro ao salvar JSON descriptografado {filepath}: {save_err}")
 
-        # Resposta da API (mantida como antes)
+        # Resposta da API
         return jsonify({
             "success": True,
-            "message": "Data received and processing started.", # Mensagem atualizada
+            "message": "Data received and processing started.",
             "batchId": uuid.uuid4().hex,
             "timestamp": datetime.now().isoformat(),
             "receivedItems": {
-                "requests": len(data.get('requests', [])),
-                "userActions": len(data.get('userActions', [])),
-                "documentContents": len(data.get('documentContents', [])),
-                "profiles": len(data.get('profiles', []))
+                "requests": len(decrypted_data.get('requests', [])),
+                "userActions": len(decrypted_data.get('userActions', [])),
+                "documentContents": len(decrypted_data.get('documentContents', [])),
+                "profiles": len(decrypted_data.get('profiles', []))
             }
-            # "storageStatus": { ... } # Removido ou ajustado se o JSON não for mais salvo
-        }), 201 # Usar 201 Created ou 202 Accepted se o processamento for async
+        }), 201
 
     except json.JSONDecodeError:
         logger.error("JSON inválido na requisição para /data")
         return jsonify({"error": "JSON inválido"}), 400
     except Exception as e:
-        logger.exception(f"Erro inesperado ao processar requisição para /data") # Usar logger.exception para incluir traceback
+        logger.exception(f"Erro inesperado ao processar requisição para /data")
         return jsonify({"error": "Erro interno no processamento dos dados"}), 500
 
 # --- Outros Endpoints (Precisam ser modificados similarmente se forem usados para receber dados a processar) ---
@@ -513,6 +746,60 @@ def verify_token_endpoint():
         "user": user_info['user'],
         'role': user_info['role']
     })
+
+@app.route('/data/<filename>', methods=['GET'])
+@token_required
+def get_json_data(filename):
+    try:
+        # Verificar se o arquivo existe
+        filepath = app.config['DATA_FOLDER'] / filename
+        if not filepath.exists():
+            return jsonify({"error": "Arquivo não encontrado"}), 404
+
+        # Ler o arquivo JSON
+        with open(filepath, 'r', encoding='utf-8') as f:
+            encrypted_data = json.load(f)
+
+        # Descriptografar os dados
+        try:
+            decrypted_data = decryption.decrypt_data(encrypted_data)
+            return jsonify({
+                "filename": filename,
+                "data": decrypted_data,
+                "timestamp": datetime.now().isoformat()
+            })
+        except Exception as decrypt_error:
+            logger.error(f"Erro ao descriptografar dados do arquivo {filename}: {str(decrypt_error)}")
+            return jsonify({"error": "Erro ao descriptografar dados"}), 400
+
+    except Exception as e:
+        logger.exception(f"Erro ao processar arquivo {filename}")
+        return jsonify({"error": "Erro interno ao processar arquivo"}), 500
+
+@app.route('/data', methods=['GET'])
+@token_required
+def list_json_files():
+    try:
+        files = []
+        for filename in os.listdir(app.config['DATA_FOLDER']):
+            if filename.endswith('.json'):
+                filepath = app.config['DATA_FOLDER'] / filename
+                file_info = {
+                    "filename": filename,
+                    "size": os.path.getsize(filepath),
+                    "created": datetime.fromtimestamp(os.path.getctime(filepath)).isoformat(),
+                    "modified": datetime.fromtimestamp(os.path.getmtime(filepath)).isoformat()
+                }
+                files.append(file_info)
+        
+        return jsonify({
+            "files": files,
+            "count": len(files),
+            "timestamp": datetime.now().isoformat()
+        })
+    except Exception as e:
+        logger.exception("Erro ao listar arquivos")
+        return jsonify({"error": "Erro interno ao listar arquivos"}), 500
 
 # --- Execução da API ---
 if __name__ == '__main__':

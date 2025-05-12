@@ -1,6 +1,5 @@
 # CPCTDataSafe
 
-**Biblioteca de auditoria de estratégias de coleta e monetização de dados de atividade online**
 Inspirada no projeto da IBM [user-test-logger](https://github.com/IBM/user-test-logger).
 
 ---
@@ -19,6 +18,7 @@ Inspirada no projeto da IBM [user-test-logger](https://github.com/IBM/user-test-
    * [Processo de Injeção](#processo-de-injeção)
    * [Comunicação com Outras Partes](#comunicação-com-outras-partes)
 6. [Guia de Instalação e Uso](#guia-de-instalação-e-uso)
+7. [Arquitetura Detalhada e Segurança](#arquitetura-detalhada-e-segurança)
 
 
 ---
@@ -31,7 +31,7 @@ O **CPCTDataSafe** é uma ferramenta de captura que intercepta em tempo real a c
 * Interceptação de requisições de rede (fetch e XHR)
 * Geração de arquivos JSON brutos e relatórios consolidados em CSV
 
-O componente central de interceptação é o **`interceptor.js`**, responsável por “injetar” código diretamente no contexto da página para monitorar todas as chamadas de rede.
+O componente central de interceptação é o **`interceptor.js`**, responsável por "injetar" código diretamente no contexto da página para monitorar todas as chamadas de rede.
 
 ---
 
@@ -59,8 +59,9 @@ Visualização simplificada:
 1. **Captura de Evento**: o usuário interage com a página (clique, rolagem, foco).
 2. **Content Script**: registra eventos e injeta o `interceptor.js`.
 3. **Interceptor.js**: coleta dados de rede.
-4. **Comunicação Interna**: `interceptor.js` envia mensagens para o Content Script; em seguida, o Background Script dispara chamadas para a API.
-5. **API**: gera logs JSON e atualiza CSV.
+4. **background.js**: recebe informações, CRIPTOGRAFA e armazena temporariamente (Cache)
+5. **Comunicação Interna**: `interceptor.js` envia mensagens para o Content Script; em seguida, o Background Script dispara chamadas para a API (dados já criptografados).
+6. **API**: recebe dados criptografados, DESCRIPTOGRAFA, gera logs JSON e atualiza CSV (sem coluna 'content').
 
 ---
 
@@ -240,3 +241,56 @@ CPCTDataSafe/
   "requests": [ /* array de requisições */ ]
 }
 ```
+
+---
+
+## Arquitetura Detalhada e Segurança
+
+```
+[PÁGINA GOOGLE]
+      │
+      ▼
+[interceptor.js]
+      │  (Intercepta XHR/Fetch, coleta info de rede)
+      └──(NÃO criptografado)──►
+                │
+                ▼
+[content-script.js]
+      │  (Coleta ações do usuário, DOM, e recebe do interceptor)
+      └──(NÃO criptografado)──►
+                │
+                ▼
+[background.js]
+      │  (Recebe dados crus)
+      └──(CRIPTOGRAFA)──►
+                │
+                ▼
+      (dados agora criptografados)
+                │
+                ▼
+[API (api.py)]
+      │  (Recebe lote de dados criptografados)
+      └──(DESCRIPTOGRAFA)──►
+                │
+                ▼
+      (dados agora em texto claro)
+                │
+                ▼
+[ARMAZENAMENTO FINAL]
+      │  (JSON descriptografado e CSV em texto claro, sem coluna 'content')
+```
+
+> **Segurança e Privacidade**
+>
+> - **Criptografia ponta-a-ponta:** Os dados são criptografados localmente antes de qualquer armazenamento ou envio, e só são descriptografados no servidor.
+> - **Redução da superfície de ataque:** Dados sensíveis nunca ficam expostos em texto claro no armazenamento local da extensão.
+> - **Proteção contra extensões maliciosas:** Outras extensões ou scripts não conseguem acessar os dados coletados, mesmo que tenham acesso ao armazenamento do navegador.
+> - **Resistência a ataques de dump de disco:** Mesmo que o disco do usuário seja copiado, os dados permanecem protegidos por criptografia.
+> - **Autenticação de API:** O envio de dados para a API exige chave de autenticação.
+> - **Sem persistência de chaves no cliente:** As chaves de descriptografia não ficam armazenadas no lado do usuário.
+> - **Filtro de dados pessoais:** Antes de qualquer dado ser enviado ou armazenado, a aplicação utiliza expressões regulares para filtrar e evitar a coleta de informações pessoais sensíveis (como CPF, CNPJ, e-mail, telefone, etc).
+
+A criptografia já no armazenamento **reduz drasticamente a superfície de ataque**, protegendo os dados mesmo que o ambiente do navegador seja comprometido.  
+_Isso impede que outras extensões maliciosas ou softwares de terceiros acessem informações sensíveis armazenadas localmente e também dificulta a extração de dados em ataques de "dump" de disco._  
+  
+Dessa forma, a privacidade do usuário é garantida por meio de **criptografia ponta-a-ponta**, desde a coleta até o processamento final no servidor.
