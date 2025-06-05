@@ -1,35 +1,55 @@
-/* Modern Responsive CSS for Login/Register Page */
+/* Modern Dark CSS for CPCT Data Safe Chrome Extension */
 :root {
-  /* Color palette */
-  --primary: #4285f4;
-  --primary-hover: #3367d6;
-  --success: #2e7d32;
-  --success-light: #e8f5e9;
-  --error: #d32f2f;
-  --error-light: #fde7e9;
-  --info: #0d47a1;
-  --info-light: #e3f2fd;
-  --background: #f8f9fa;
-  --card: #ffffff;
-  --border: #e0e0e0;
-  --text-primary: #2c3e50;
-  --text-secondary: #546e7a;
-  --shadow: rgba(0, 0, 0, 0.1);
+  /* Dark Color palette */
+  --primary: #6366f1;
+  --primary-hover: #4f46e5;
+  --primary-light: rgba(99, 102, 241, 0.15);
+  --success: #10b981;
+  --success-light: rgba(16, 185, 129, 0.15);
+  --error: #ef4444;
+  --error-light: rgba(239, 68, 68, 0.15);
+  --warning: #f59e0b;
+  --warning-light: rgba(245, 158, 11, 0.15);
+  
+  /* Dark theme backgrounds */
+  --background: #0f172a;
+  --background-secondary: #1e293b;
+  --card: #1e293b;
+  --card-hover: #334155;
+  --surface: #2d3748;
+  --surface-hover: #374151;
+  
+  /* Borders and dividers */
+  --border: #374151;
+  --border-light: #4b5563;
+  --border-focus: #6366f1;
+  
+  /* Text colors */
+  --text-primary: #f8fafc;
+  --text-secondary: #cbd5e1;
+  --text-muted: #94a3b8;
+  
+  /* Shadows and glows */
+  --shadow: rgba(0, 0, 0, 0.3);
+  --shadow-lg: rgba(0, 0, 0, 0.5);
+  --glow: rgba(99, 102, 241, 0.3);
 
   /* Spacing */
   --space-xs: 4px;
   --space-sm: 8px;
   --space-md: 16px;
   --space-lg: 24px;
+  --space-xl: 32px;
 
   /* Border radius */
-  --radius-sm: 4px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
 
   /* Transitions */
-  --transition-fast: 0.2s ease-in-out;
-  --transition-med: 0.3s ease-in-out;
+  --transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 * {

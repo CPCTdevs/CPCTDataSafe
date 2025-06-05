@@ -23,7 +23,7 @@ app = Flask(__name__)
 # Configuração CORS aprimorada
 CORS(app,
      supports_credentials=True,
-     resources={r"/*": {"origins": ["chrome-extension://*", "http://localhost:*", "https://localhost:*"]}},
+     resources={r"/*": {"origins": ["chrome-extension://*", "http://localhost:*", "https://localhost:*", "http://143.107.95.250:*"]}},
      allow_headers=["Content-Type", "Authorization", "X-Requested-With", "X-API-Key"],
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
      expose_headers=["Content-Type", "X-API-Key"])
