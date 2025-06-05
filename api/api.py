@@ -16,6 +16,11 @@ from utils.decryption import Decryption
 from queue import Queue, Empty
 from collections import defaultdict
 import time
+from flask_sqlalchemy import SQLAlchemy
+from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
+from werkzeug.security import generate_password_hash, check_password_hash
+import bcrypt
+from cryptography.fernet import Fernet
 
 app = Flask(__name__)
 
@@ -46,7 +51,11 @@ app.config.update({
     'PROCESSING_TIMEOUT': 600,  # Timeout de 10 minutos para processamento
     'CLEANUP_INTERVAL': 3600,  # Limpeza a cada 1 hora
     'MAX_RETRIES': 3,  # Número máximo de tentativas para processar um arquivo
-    'RETRY_DELAY': 5  # Tempo de espera entre tentativas (segundos)
+    'RETRY_DELAY': 5,  # Tempo de espera entre tentativas (segundos)
+    'SQLALCHEMY_DATABASE_URI': 'postgresql://usuario:senha@localhost:5432/cpctdatasafe',
+    'SQLALCHEMY_TRACK_MODIFICATIONS': False,
+    'JWT_SECRET_KEY': 'super-secret-key',  # Troque por uma chave forte em produção
+    'FERNET_KEY': Fernet.generate_key().decode()  # Troque por uma chave persistente em produção
 })
 
 # Configuração de logging
@@ -75,6 +84,25 @@ user_locks = defaultdict(threading.Lock)
 thread_pool = ThreadPoolExecutor(max_workers=app.config['MAX_WORKERS'])
 last_cleanup = datetime.now()
 failed_files = defaultdict(list)  # Armazena arquivos que falharam para retry
+
+db = SQLAlchemy(app)
+jwt = JWTManager(app)
+fernet = Fernet(app.config['FERNET_KEY'].encode())
+
+# Modelo de usuário básico
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True, nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    password_hash = db.Column(db.String(128), nullable=False)
+    role = db.Column(db.String(20), default='user')  # 'user' ou 'admin'
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def set_password(self, password):
+        self.password_hash = generate_password_hash(password)
+
+    def check_password(self, password):
+        return check_password_hash(self.password_hash, password)
 
 def retry_failed_files():
     """Tenta processar novamente arquivos que falharam anteriormente."""
@@ -800,6 +828,38 @@ def list_json_files():
     except Exception as e:
         logger.exception("Erro ao listar arquivos")
         return jsonify({"error": "Erro interno ao listar arquivos"}), 500
+
+# Endpoint de registro
+@app.route('/register', methods=['POST'])
+def register():
+    data = request.get_json()
+    username = data.get('username')
+    email = data.get('email')
+    password = data.get('password')
+    role = data.get('role', 'user')
+    if not username or not email or not password:
+        return jsonify({'error': 'username, email e password são obrigatórios'}), 400
+    if User.query.filter((User.username == username) | (User.email == email)).first():
+        return jsonify({'error': 'Usuário ou email já existe'}), 409
+    user = User(username=username, email=email, role=role)
+    user.set_password(password)
+    db.session.add(user)
+    db.session.commit()
+    return jsonify({'message': 'Usuário registrado com sucesso'}), 201
+
+# Endpoint de login
+@app.route('/login', methods=['POST'])
+def login():
+    data = request.get_json()
+    username = data.get('username')
+    password = data.get('password')
+    if not username or not password:
+        return jsonify({'error': 'username e password são obrigatórios'}), 400
+    user = User.query.filter_by(username=username).first()
+    if not user or not user.check_password(password):
+        return jsonify({'error': 'Usuário ou senha inválidos'}), 401
+    access_token = create_access_token(identity={'id': user.id, 'username': user.username, 'role': user.role})
+    return jsonify({'access_token': access_token, 'user': {'id': user.id, 'username': user.username, 'role': user.role}}), 200
 
 # --- Execução da API ---
 if __name__ == '__main__':

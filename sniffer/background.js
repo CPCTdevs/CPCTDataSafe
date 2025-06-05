@@ -678,7 +678,7 @@ async function sendDataToServer(forceUpload = false) {
     console.log(`[Background] Enviando ${totalItems} itens para API: ${API_ENDPOINT} (Usuário: ${effectiveUserId})`);
     
     // Não precisamos criptografar novamente, pois os dados já estão criptografados
-    const response = await fetch(API_ENDPOINT, {
+    const response = await fetch(API_ENDPOINT+ "/data", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

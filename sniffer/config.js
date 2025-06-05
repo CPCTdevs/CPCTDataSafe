@@ -1,5 +1,5 @@
 // Configuração da API
-const API_ENDPOINT = "http://143.107.95.250:8888/data";
+const API_ENDPOINT = "http://143.107.95.250:8888";
 const API_KEY = "abcd123";
 
 // Exportar as constantes
