@@ -1,0 +1,69 @@
+services:
+  api:
+    build: .
+    volumes:
+      - ./app:/app/app
+      - ./utils:/app/utils
+      - ./data:/app/data
+      - ./user_csvs:/app/user_csvs
+      - ./keys:/app/keys
+    environment:
+      - SQLALCHEMY_DATABASE_URI=postgresql://dbuser9876:s3cr3T!9876@db:5432/cpctdb
+      - FERNET_KEY=${FERNET_KEY}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - MAIL_SERVER=smtp.gmail.com
+      - MAIL_PORT=587
+      - MAIL_USE_TLS=True
+      - MAIL_USERNAME=${MAIL_USERNAME}
+      - MAIL_PASSWORD=${MAIL_PASSWORD}
+    depends_on:
+      - db
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+
+  db:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=dbuser9876
+      - POSTGRES_PASSWORD=s3cr3T!9876
+      - POSTGRES_DB=cpctdb
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dbuser9876 -d cpctdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "443:443"
+      - "8080:8080"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+      - ./app/static:/usr/share/nginx/html:ro
+    depends_on:
+      - api
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+volumes:
+  postgres_data: 

@@ -1,5 +1,12 @@
 // Gerenciador de usuários para a extensão CPCT Data Safe
 
+// Função para formatar timestamp compatível com o servidor
+function getCompatibleTimestamp() {
+  const now = new Date();
+  // Formato sem milissegundos e com +00:00 ao invés de Z
+  return now.toISOString().slice(0, 19) + '+00:00';
+}
+
 /**
  * Classe para gerenciar usuários e autenticação
  */
@@ -117,7 +124,7 @@ class UserManager {
       users[username] = {
         userId: userId,
         password: this.hashPassword(password),
-        createdAt: new Date().toISOString()
+        createdAt: getCompatibleTimestamp()
       };
       
       // Salvar usuários atualizados
@@ -150,14 +157,14 @@ class UserManager {
           userLoggedIn: true,
           userId: userId,
           username: username,
-          lastLogin: new Date().toISOString()
+          lastLogin: getCompatibleTimestamp()
         });
         
         // Atualizar usuário atual
         this.currentUser = {
           userId: userId,
           username: username,
-          lastLogin: new Date().toISOString()
+          lastLogin: getCompatibleTimestamp()
         };
         
         return { success: true, userId: userId, username: username };

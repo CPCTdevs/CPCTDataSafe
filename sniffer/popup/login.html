@@ -1,61 +1,89 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>CPCT-DataSafe - Login</title>
-  <meta charset="utf-8">
-  <link rel="stylesheet" href="cpctDataSafePopup.css">
+  <meta charset="UTF-8">
+  <title>CPCT Data Safe - Login</title>
   <link rel="stylesheet" href="login.css">
 </head>
 <body>
-  <div class="container login-container">
+  <div class="container">
     <header>
-      <h1>CPCT-DataSafe</h1>
-      <img class="logo" src="../images/icon128.png" alt="CPCT-DataSafe Icon">
+      <h1>CPCT Data Safe</h1>
+      <img class="logo" src="../images/icon128.png" alt="CPCT Data Safe Icon">
     </header>
     
-    <section class="login-section">
-      <h2>Login</h2>
-      <div id="login-form">
+    <div id="login-form" class="auth-section">
+      <h2>Entrar</h2>
+      <form id="login-form-element">
         <div class="form-group">
-          <label for="username">Usuário:</label>
-          <input type="text" id="username" name="username" required>
+          <label for="username">Usuário</label>
+          <input type="text" id="username" placeholder="Digite seu nome de usuário" required>
         </div>
         <div class="form-group">
-          <label for="password">Senha:</label>
-          <input type="password" id="password" name="password" required>
+          <label for="password">Senha</label>
+          <input type="password" id="password" placeholder="Digite sua senha" required>
         </div>
-        <div class="form-actions">
-          <button id="login-button" class="primary-button">Entrar</button>
-        </div>
-        <div id="login-status" class="status-message"></div>
+        <button type="submit" id="login-button" class="primary-button">
+          <span class="button-text">Entrar</span>
+          <div class="loading-spinner" style="display: none;"></div>
+        </button>
+      </form>
+      <div id="login-status" class="status-message"></div>
+      <div class="auth-switch">
+        <span>Não tem uma conta?</span>
+        <button id="register-toggle" class="link-button">Registre-se</button>
       </div>
-    </section>
-    
-    <section class="register-section">
-      <h2>Novo Usuário?</h2>
-      <button id="register-toggle" class="secondary-button">Registrar</button>
-      <div id="register-form" style="display: none;">
+    </div>
+
+    <div id="register-form" class="auth-section" style="display: none;">
+      <h2>Criar Conta</h2>
+      <form id="register-form-element">
         <div class="form-group">
-          <label for="new-username">Novo Usuário:</label>
-          <input type="text" id="new-username" name="new-username" required>
-        </div>
-        <div class="form-group">
-          <label for="new-password">Nova Senha:</label>
-          <input type="password" id="new-password" name="new-password" required>
+          <label for="new-username">Usuário</label>
+          <input type="text" id="new-username" placeholder="Escolha um nome de usuário" required>
         </div>
         <div class="form-group">
-          <label for="confirm-password">Confirmar Senha:</label>
-          <input type="password" id="confirm-password" name="confirm-password" required>
+          <label for="new-email">Email</label>
+          <input type="email" id="new-email" placeholder="Digite seu email" required>
         </div>
-        <div class="form-actions">
-          <button id="register-button" class="primary-button">Registrar</button>
-          <button id="cancel-register" class="secondary-button">Cancelar</button>
+        <div class="form-group">
+          <label for="new-password">Senha</label>
+          <input type="password" id="new-password" placeholder="Crie uma senha segura" required>
         </div>
-        <div id="register-status" class="status-message"></div>
+        <div class="form-group">
+          <label for="confirm-password">Confirmar Senha</label>
+          <input type="password" id="confirm-password" placeholder="Confirme sua senha" required>
+        </div>
+        <button type="submit" id="register-button" class="primary-button">
+          <span class="button-text">Registrar</span>
+          <div class="loading-spinner" style="display: none;"></div>
+        </button>
+      </form>
+      <div id="register-status" class="status-message"></div>
+      <div class="auth-switch">
+        <span>Já tem uma conta?</span>
+        <button id="login-toggle" class="link-button">Entrar</button>
+      </div>
+    </div>
+
+    <section class="api-info-section">
+      <h2>Status da Conexão</h2>
+      <div class="api-info-container">
+        <div class="api-info-item">
+          <span class="api-info-label">Servidor:</span>
+          <span id="api-destination" class="api-info-value">Verificando...</span>
+        </div>
+        <div class="api-info-item">
+          <span class="api-info-label">Status:</span>
+          <span id="api-status" class="api-info-value">
+            <div class="status-indicator" id="status-indicator"></div>
+            <span id="status-text">Verificando...</span>
+          </span>
+        </div>
       </div>
     </section>
   </div>
-  
+
   <script src="login.js"></script>
 </body>
 </html>

@@ -4,3 +4,18 @@ api/venv
 api/api_server.log
 api/keys
 sniffer/keys
+api/env
+api/nginx.conf
+api/app.py
+api/config.py
+api/models.py
+api/utils.py
+api/tests.py
+api/requirements.txt
+api/nginx.conf.bak
+api/docker-compose.yml
+api/dockerfile
+__pycache__
+rsa_private.pem
+CPCTDataSafe/api/app/keys/rsa_private copy.pem
+Dockerfile

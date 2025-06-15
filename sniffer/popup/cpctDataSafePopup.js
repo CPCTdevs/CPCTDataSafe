@@ -1,5 +1,17 @@
 // Script do popup para a extensão CPCT Data Safe
 
+// Função para formatar timestamp compatível com o servidor
+function getCompatibleTimestamp() {
+  const now = new Date();
+  // Formato sem milissegundos e com +00:00 ao invés de Z
+  return now.toISOString().slice(0, 19) + '+00:00';
+}
+
+// Função para gerar timestamp para nomes de arquivo (formato seguro para arquivos)
+function getFileTimestamp() {
+  return new Date().toISOString().replace(/[:.]/g, "-");
+}
+
 // Elementos do DOM
 let statsElement
 let uploadButton
@@ -137,19 +149,31 @@ document.addEventListener("DOMContentLoaded", () => {
 
 // Verificar se o usuário está logado
 function checkLoginStatus() {
-  chrome.storage.local.get(["userLoggedIn", "userId", "username", "lastLogin"], (result) => {
-    if (!result.userLoggedIn) {
-      // Redirecionar para a página de login
+  console.log("Verificando status de login...");
+  
+  chrome.runtime.sendMessage({ action: 'getAuthStatus' }, (response) => {
+    if (chrome.runtime.lastError) {
+      console.error('Erro ao verificar status de login:', chrome.runtime.lastError);
+      window.location.href = "login.html";
+      return;
+    }
+    
+    console.log("Status de autenticação:", response);
+    
+    if (!response.isAuthenticated) {
+      console.log("Usuário não autenticado, redirecionando para login...");
       window.location.href = "login.html";
       return;
     }
     
     // Armazenar informações do usuário
     currentUser = {
-      userId: result.userId,
-      username: result.username,
-      lastLogin: result.lastLogin
+      userId: response.userId,
+      username: response.user?.username || "Usuário",
+      lastLogin: getCompatibleTimestamp()
     };
+    
+    console.log("Usuário autenticado:", currentUser);
     
     // Atualizar informações do usuário na interface
     updateUserInfo();
@@ -166,17 +190,16 @@ function updateUserInfo() {
 
 // Lidar com logout do usuário
 function handleLogout() {
-  chrome.storage.local.set({
-    userLoggedIn: false,
-    userId: null,
-    username: null
-  }, () => {
-    // Notificar background script sobre o logout
-    chrome.runtime.sendMessage({
-      action: "userLoggedOut"
-    });
+  console.log("Iniciando logout...");
+  
+  chrome.runtime.sendMessage({ action: 'logout' }, (response) => {
+    if (chrome.runtime.lastError) {
+      console.error('Erro ao fazer logout:', chrome.runtime.lastError);
+    } else {
+      console.log("Logout realizado:", response);
+    }
     
-    // Redirecionar para a página de login
+    // Sempre redirecionar para login após logout
     window.location.href = "login.html";
   });
 }
@@ -185,53 +208,18 @@ function handleLogout() {
 function checkApiStatus() {
   console.log("checkApiStatus: Iniciando verificação...");
   
-  chrome.runtime.sendMessage({ action: "getApiConfig" }, (config) => {
-    console.log("checkApiStatus: Resposta do getApiConfig:", config);
-    
+  chrome.runtime.sendMessage({ action: "checkApiStatus" }, (response) => {
     if (chrome.runtime.lastError) {
-      console.error("checkApiStatus: Erro ao obter configuração da API:", chrome.runtime.lastError);
+      console.error("checkApiStatus: Erro ao verificar status da API:", chrome.runtime.lastError);
       updateApiStatusDisplay(false, null);
       return;
     }
     
-    if (config && config.baseUrl) {
-      console.log(`checkApiStatus: Fazendo requisição para ${config.baseUrl}/health`);
-      
-      fetch(`${config.baseUrl}/health`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json'
-        }
-      })
-      .then(response => {
-        console.log("checkApiStatus: Status da resposta:", response.status, response.ok);
-        console.log("checkApiStatus: Headers da resposta:", [...response.headers]);
-        
-        if (response.ok) {
-          // Tenta fazer parse do JSON, mas se falhar ainda considera conectado
-          response.json()
-            .then(data => {
-              console.log("checkApiStatus: Dados recebidos:", data);
-              updateApiStatusDisplay(true, data);
-            })
-            .catch(jsonError => {
-              console.log("checkApiStatus: Erro ao fazer parse do JSON, mas API está respondendo:", jsonError);
-              updateApiStatusDisplay(true, { message: "API respondendo, mas resposta não é JSON válido" });
-            });
-        } else {
-          console.error("checkApiStatus: API retornou status não-OK:", response.status);
-          response.text().then(text => {
-            console.error("checkApiStatus: Resposta da API:", text);
-          });
-          updateApiStatusDisplay(false, null);
-        }
-      })
-      .catch(error => {
-        console.error("checkApiStatus: Erro ao verificar status da API:", error);
-        updateApiStatusDisplay(false, null);
-      });
+    if (response) {
+      console.log("checkApiStatus: Resposta recebida:", response);
+      updateApiStatusDisplay(response.isOnline, response.healthData);
     } else {
-      console.error("checkApiStatus: Configuração da API não encontrada ou inválida:", config);
+      console.error("checkApiStatus: Resposta inválida do background script");
       updateApiStatusDisplay(false, null);
     }
   });
@@ -253,21 +241,52 @@ function updateApiStatusDisplay(isHealthy, healthData = null) {
     }
   }
   
-  console.log("updateApiStatusDisplay: Atualizando status da API para:", isHealthy ? "Conectado" : "Erro de Conexão");
+  let statusText = "Verificando...";
+  let statusClass = "api-info-value";
   
-  apiStatusElement.textContent = isHealthy ? "Conectado" : "Erro de Conexão";
-  apiStatusElement.className = isHealthy ? "api-info-value success" : "api-info-value error";
+  if (isHealthy === true) {
+    statusText = "Conectado";
+    statusClass = "api-info-value success";
+  } else if (isHealthy === false) {
+    if (healthData && healthData.error) {
+      if (healthData.error.includes('Failed to fetch')) {
+        statusText = "Servidor inacessível";
+      } else if (healthData.error.includes('Servidor não acessível')) {
+        statusText = "Sem conexão";
+      } else {
+        statusText = "Erro de conexão";
+      }
+    } else {
+      statusText = "Desconectado";
+    }
+    statusClass = "api-info-value error";
+  }
+  
+  console.log("updateApiStatusDisplay: Atualizando status da API para:", statusText);
+  
+  apiStatusElement.textContent = statusText;
+  apiStatusElement.className = statusClass;
   
   // Criar tooltip com informações adicionais
-  let tooltipText = `Status: ${isHealthy ? 'Conectado' : 'Erro de Conexão'}\n`;
+  let tooltipText = `Status: ${statusText}\n`;
   
   if (healthData) {
-    tooltipText += `Versão: ${healthData.version || 'N/A'}\n`;
-    if (healthData.message) {
-      tooltipText += `Mensagem: ${healthData.message}\n`;
+    if (healthData.status === 'healthy') {
+      tooltipText += `Servidor: Saudável\n`;
+    } else if (healthData.status === 'server_responding') {
+      tooltipText += `Servidor: Respondendo (health endpoint indisponível)\n`;
     }
-    if (healthData.timestamp) {
-      tooltipText += `Última atualização: ${new Date(healthData.timestamp).toLocaleString("pt-BR")}`;
+    
+    if (healthData.note) {
+      tooltipText += `Nota: ${healthData.note}\n`;
+    }
+    
+    if (healthData.error) {
+      tooltipText += `Erro: ${healthData.error}\n`;
+    }
+    
+    if (healthData.endpoint) {
+      tooltipText += `Endpoint: ${healthData.endpoint}\n`;
     }
   }
   
@@ -419,7 +438,7 @@ function exportAllData() {
   }
 
   try {
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-")
+    const timestamp = getFileTimestamp()
     const result = window.CpctDataSafeCSV.exportAllDataAsZip(
       currentData,
       `cpct-data-safe-exportacao-${timestamp}.zip`,
@@ -443,7 +462,7 @@ function exportSpecificData(dataType, fileNamePart) {
 
   try {
     const headers = window.CpctDataSafeCSV.getHeadersForDataType(dataType, true)
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-")
+    const timestamp = getFileTimestamp()
     window.CpctDataSafeCSV.downloadCSV(
       currentData[dataType],
       headers,

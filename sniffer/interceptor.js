@@ -9,6 +9,13 @@
   window.__CPCT_INTERCEPTOR_INJECTED__ = true;
   console.log("[CPCT Interceptor] Script rodando no contexto da página.");
 
+  // Função para formatar timestamp compatível com o servidor
+  function getCompatibleTimestamp() {
+    const now = new Date();
+    // Formato sem milissegundos e com +00:00 ao invés de Z
+    return now.toISOString().slice(0, 19) + '+00:00';
+  }
+
   function gerarIdRequisicao() {
     return "req_" + Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
   }
@@ -66,7 +73,7 @@
           method: metodo,
           statusCode: response.status,
           duration: duracao,
-          timestamp: new Date().toISOString(),
+          timestamp: getCompatibleTimestamp(),
         }, "*");
       }).catch(erro => {
         console.warn(`[CPCT Interceptor] Erro ao ler corpo da resposta do fetch para ${idRequisicao}`, erro);
@@ -79,7 +86,7 @@
           method: metodo,
           statusCode: response.status,
           duration: duracao,
-          timestamp: new Date().toISOString(),
+          timestamp: getCompatibleTimestamp(),
           bodyReadError: erro.message
         }, "*");
       });
@@ -99,7 +106,7 @@
         statusCode: 0,
         error: erro.message,
         duration: duracao,
-        timestamp: new Date().toISOString(),
+        timestamp: getCompatibleTimestamp(),
       }, "*");
       
       throw erro;
@@ -151,7 +158,7 @@
           method: metodo,
           statusCode: xhr.status,
           duration: duracao,
-          timestamp: new Date().toISOString(),
+          timestamp: getCompatibleTimestamp(),
         }, "*");
       }
     });
@@ -177,7 +184,7 @@
         statusCode: 0,
         error: "Erro de Rede ou problema de CORS",
         duration: duracao,
-        timestamp: new Date().toISOString(),
+        timestamp: getCompatibleTimestamp(),
       }, "*");
     });
 
@@ -202,7 +209,7 @@
         statusCode: 0,
         error: "Requisição expirou (timeout)",
         duration: duracao,
-        timestamp: new Date().toISOString(),
+        timestamp: getCompatibleTimestamp(),
       }, "*");
     });
 
@@ -213,6 +220,6 @@
   window.postMessage({
     __CPCT__: true,
     type: "scriptInjected",
-    timestamp: new Date().toISOString()
+    timestamp: getCompatibleTimestamp()
   }, "*");
 })();

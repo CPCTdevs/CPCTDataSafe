@@ -1,10 +1,24 @@
 {
   "manifest_version": 3,
   "name": "CPCT Data Safe",
-  "version": "1.0.2",
+  "version": "1.0.4",
   "description": "Intercepta dados de telemetria do google para análise.",
-  "permissions": ["webRequest", "storage", "tabs", "activeTab", "scripting"],
-  "host_permissions": ["*://*.google.com/*"],
+  "permissions": [
+    "webRequest", 
+    "storage", 
+    "tabs", 
+    "activeTab", 
+    "scripting",
+    "background",
+    "declarativeNetRequest"
+  ],
+  "host_permissions": [
+    "*://*.google.com/*",
+    "https://cpctdatasafe.com.br/data",
+    "https://api.cpctdatasafe.com.br/data",
+    "https://api.cpctdatasafe.com.br/*",
+    "http://api.cpctdatasafe.com.br/*"
+  ],
   "background": {
     "service_worker": "background.js"
   },
@@ -28,5 +42,8 @@
       "resources": ["unload-collector.html", "utils/*", "config.js", "interceptor.js", "keys/*"],
       "matches": ["*://*.google.com/*"]
     }
-  ]
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self';"
+  }
 }

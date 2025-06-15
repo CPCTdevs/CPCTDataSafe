@@ -1,0 +1,1699 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Painel de Auditoria - CPCT</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Biblioteca de Criptografia Client-Side -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        body {
+            background: #f5f5f5;
+            color: #333;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        header {
+            background: #fff;
+            padding: 1.2rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #ddd;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .logo-container {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .logo-icon {
+            font-size: 1.8rem;
+            color: #007bff;
+        }
+
+        h1 {
+            font-weight: 400;
+            font-size: 1.6rem;
+            letter-spacing: 0.5px;
+        }
+
+        .app-name {
+            color: #007bff;
+            font-weight: 600;
+        }
+
+        main {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 2rem;
+        }
+
+        .auth-container {
+            width: 100%;
+            max-width: 420px;
+        }
+
+        .auth-box {
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            border: 1px solid #ddd;
+            overflow: hidden;
+        }
+
+        .auth-header {
+            background: #007bff;
+            padding: 2rem;
+            text-align: center;
+            border-bottom: 1px solid #0056b3;
+        }
+
+        .auth-header h2 {
+            margin-bottom: 0.5rem;
+            font-size: 1.4rem;
+            color: #ffffff;
+        }
+
+        .auth-header p {
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 0.9rem;
+        }
+
+        .auth-body {
+            padding: 2rem;
+        }
+
+        .form-group {
+            margin-bottom: 1.5rem;
+            position: relative;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: #555;
+            font-weight: 500;
+            font-size: 0.9rem;
+        }
+
+        .form-control {
+            width: 100%;
+            padding: 12px 40px 12px 15px;
+            background: #fff;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            color: #333;
+            font-size: 0.95rem;
+        }
+
+        .form-control:focus {
+            outline: none;
+            border-color: #007bff;
+            box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+        }
+
+        .input-icon {
+            position: absolute;
+            right: 15px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #007bff;
+            pointer-events: none;
+        }
+
+        .btn-primary {
+            width: 100%;
+            padding: 12px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            margin-bottom: 1rem;
+        }
+
+        .btn-primary:hover {
+            background: #0056b3;
+        }
+
+        .btn-secondary {
+            width: 100%;
+            padding: 12px;
+            background: transparent;
+            color: #007bff;
+            border: 1px solid #007bff;
+            border-radius: 4px;
+            font-size: 0.95rem;
+            cursor: pointer;
+            margin-bottom: 1rem;
+        }
+
+        .btn-secondary:hover {
+            background: rgba(0, 123, 255, 0.1);
+        }
+
+        .alert {
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 0.9rem;
+            line-height: 1.4;
+            border-left: 4px solid;
+        }
+
+        .alert-success {
+            background: #d4edda;
+            color: #155724;
+            border-left-color: #28a745;
+        }
+
+        .alert-error {
+            background: #f8d7da;
+            color: #721c24;
+            border-left-color: #dc3545;
+        }
+
+        .alert-info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border-left-color: #007bff;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .divider {
+            text-align: center;
+            margin: 1.5rem 0;
+            position: relative;
+        }
+
+        .divider::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: #ddd;
+        }
+
+        .divider span {
+            background: #f5f5f5;
+            padding: 0 1rem;
+            color: #666;
+            font-size: 0.8rem;
+        }
+
+        .security-info {
+            margin-top: 1.5rem;
+            padding: 1rem;
+            background: #f8f9fa;
+            border-radius: 4px;
+            border-left: 3px solid #007bff;
+        }
+
+        .security-info p {
+            margin: 0;
+            font-size: 0.85rem;
+            color: #666;
+            line-height: 1.4;
+        }
+
+        footer {
+            background: #fff;
+            padding: 1.5rem 2rem;
+            text-align: center;
+            border-top: 1px solid #ddd;
+            margin-top: auto;
+        }
+
+        footer p {
+            margin: 0.25rem 0;
+            color: #666;
+            font-size: 0.85rem;
+        }
+
+
+
+        .qr-container {
+            text-align: center;
+            margin: 1.5rem 0;
+        }
+
+        .qr-code {
+            max-width: 200px;
+            height: auto;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+
+        .backup-codes {
+            background: #f8f9fa;
+            padding: 1rem;
+            border-radius: 4px;
+            margin: 1rem 0;
+            font-family: 'Courier New', monospace;
+            border: 1px solid #ddd;
+        }
+
+        .backup-codes h4 {
+            color: #dc3545;
+            margin-bottom: 0.5rem;
+            font-size: 0.9rem;
+        }
+
+        .backup-codes ul {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.5rem;
+        }
+
+        .backup-codes li {
+            background: #e9ecef;
+            padding: 0.5rem;
+            border-radius: 4px;
+            text-align: center;
+            color: #333;
+            font-size: 0.85rem;
+        }
+
+        /* Crypto Status Indicator */
+        .crypto-status {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #007bff;
+            color: white;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            z-index: 1000;
+        }
+
+        .crypto-active {
+            background: #28a745 !important;
+        }
+    </style>
+</head>
+
+<body>
+    <header>
+        <div class="logo-container">
+            <i class="fas fa-shield-alt logo-icon"></i>
+            <h1>Painel de Auditoria <span class="app-name">CPCT</span></h1>
+        </div>
+    </header>
+
+    <main>
+        <div class="auth-container">
+            <!-- Formulário de Login -->
+            <div id="loginBox" class="auth-box">
+                <div class="auth-header">
+                    <h2><i class="fas fa-user-shield"></i> Login do Auditor</h2>
+                    <p>Acesso restrito ao pessoal autorizado</p>
+                </div>
+                
+                <div class="auth-body">
+                    <div id="loginAlert" class="alert hidden">
+                        <i id="alertIcon"></i> <span id="alertText"></span>
+                    </div>
+                    
+                    <form id="loginForm">
+                        <div class="form-group">
+                            <label for="username"><i class="fas fa-user"></i> Usuário</label>
+                            <i class="fas fa-user input-icon"></i>
+                            <input type="text" id="username" class="form-control" placeholder="Digite seu usuário" required>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="password"><i class="fas fa-lock"></i> Senha</label>
+                            <i class="fas fa-lock input-icon"></i>
+                            <input type="password" id="password" class="form-control" placeholder="Digite sua senha" required>
+                        </div>
+                        
+                        <div id="2faSection" class="hidden">
+                            <div class="divider">
+                                <span>Autenticação de Dois Fatores</span>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="totpToken"><i class="fas fa-mobile-alt"></i> Código 2FA (6 dígitos)</label>
+                                <i class="fas fa-key input-icon"></i>
+                                <input type="text" id="totpToken" class="form-control" maxlength="6" pattern="[0-9]{6}" placeholder="000000">
+                            </div>
+                            
+                            <div class="divider">
+                                <span>OU</span>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="backupCode"><i class="fas fa-key"></i> Código de backup</label>
+                                <i class="fas fa-unlock-alt input-icon"></i>
+                                <input type="text" id="backupCode" class="form-control" maxlength="8" placeholder="Código de backup">
+                            </div>
+                        </div>
+                        
+                        <button type="submit" class="btn-primary">Entrar no Sistema</button>
+                    </form>
+
+                    <button id="showRegisterBtn" class="btn-secondary">Não tem conta? Registrar-se</button>
+                    
+                </div>
+            </div>
+
+            <!-- Formulário de Registro -->
+            <div id="registerBox" class="auth-box hidden">
+                <div class="auth-header">
+                    <h2><i class="fas fa-user-plus"></i> Registro de Auditor</h2>
+                    <p>Solicite acesso ao sistema</p>
+                </div>
+                
+                <div class="auth-body">
+                    <div id="registerAlert" class="alert hidden">
+                        <i id="registerAlertIcon"></i> <span id="registerAlertText"></span>
+                    </div>
+                    
+                    <form id="registerForm">
+                        <div class="form-group">
+                            <label for="regUsername"><i class="fas fa-user"></i> Usuário</label>
+                            <i class="fas fa-user input-icon"></i>
+                            <input type="text" id="regUsername" class="form-control" placeholder="Digite seu usuário" required>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="regEmail"><i class="fas fa-envelope"></i> Email</label>
+                            <i class="fas fa-envelope input-icon"></i>
+                            <input type="email" id="regEmail" class="form-control" placeholder="Digite seu email" required>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="regPassword"><i class="fas fa-lock"></i> Senha</label>
+                            <i class="fas fa-lock input-icon"></i>
+                            <input type="password" id="regPassword" class="form-control" placeholder="Digite sua senha" required>
+                        </div>
+                        
+                        <button type="submit" class="btn-primary">Registrar como Auditor</button>
+                    </form>
+
+                    <button id="showLoginBtn" class="btn-secondary">Já tem conta? Fazer login</button>
+                    
+                    <div class="security-info">
+                        <p><i class="fas fa-info-circle"></i> Requisitos de senha: mínimo 12 caracteres, incluindo maiúsculas, minúsculas, números e símbolos.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Configuração 2FA -->
+            <div id="setup2faBox" class="auth-box hidden">
+                <div class="auth-header">
+                    <h2><i class="fas fa-shield-alt"></i> Configurar 2FA</h2>
+                    <p>Configure a autenticação de dois fatores</p>
+                </div>
+                
+                <div class="auth-body">
+                    <div id="setup2faAlert" class="alert hidden">
+                        <i id="setup2faAlertIcon"></i> <span id="setup2faAlertText"></span>
+                    </div>
+
+                    <div id="qrCodeSection">
+                        <p>Escaneie o QR Code com seu app autenticador:</p>
+                        <div class="qr-container">
+                            <img id="qrCodeImage" class="qr-code" alt="QR Code para 2FA">
+                        </div>
+                        
+                        <p><strong>Chave manual:</strong></p>
+                        <div class="backup-codes">
+                            <code id="manualKey"></code>
+                        </div>
+                    </div>
+
+                    <form id="verify2faForm">
+                        <div class="form-group">
+                            <label for="verify2faToken"><i class="fas fa-key"></i> Digite o código do app (6 dígitos)</label>
+                            <i class="fas fa-key input-icon"></i>
+                            <input type="text" id="verify2faToken" class="form-control" maxlength="6" pattern="[0-9]{6}" placeholder="000000" required>
+                        </div>
+                        
+                        <button type="submit" class="btn-primary">Verificar e Ativar 2FA</button>
+                    </form>
+                    
+                    <div id="backupCodesSection" class="hidden">
+                        <div class="backup-codes">
+                            <h4><i class="fas fa-exclamation-triangle"></i> CÓDIGOS DE BACKUP - GUARDE EM LOCAL SEGURO!</h4>
+                            <ul id="backupCodesList"></ul>
+                        </div>
+                        <p style="color: #ff6b6b; font-size: 0.9rem; text-align: center; margin-top: 1rem;">
+                            <strong>IMPORTANTE:</strong> Estes códigos só aparecem uma vez. Guarde-os em local seguro!
+                        </p>
+                        <button onclick="window.location.reload()" class="btn-primary">Continuar para o Painel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Status da Criptografia -->
+    <div id="cryptoStatus" class="crypto-status">
+        <i class="fas fa-shield-alt"></i>
+        <span>Criptografia Ativa</span>
+    </div>
+
+    <!-- Dashboard Principal -->
+    <div id="dashboard" class="dashboard hidden">
+        <header class="dashboard-header">
+            <h1><i class="fas fa-shield-alt"></i> Painel de Auditoria</h1>
+            <div class="header-actions">
+                <span id="currentUserInfo" class="user-info"></span>
+                <button id="logoutBtn" class="logout-btn">
+                    <i class="fas fa-sign-out-alt"></i> Sair
+                </button>
+            </div>
+        </header>
+
+        <div id="dashboardAlert" class="alert hidden">
+            <i id="dashboardAlertIcon" class="fas"></i>
+            <span id="dashboardAlertText"></span>
+        </div>
+
+        <div class="dashboard-tabs">
+            <button class="tab-btn active" onclick="showTab('pending-users')">
+                <i class="fas fa-user-clock"></i> Usuários Pendentes
+            </button>
+            <button class="tab-btn" onclick="showTab('audit-logs')">
+                <i class="fas fa-history"></i> Logs de Auditoria
+            </button>
+            <button class="tab-btn" onclick="showTab('export-data')">
+                <i class="fas fa-download"></i> Exportar Dados
+            </button>
+            <button class="tab-btn" onclick="showTab('system-stats')">
+                <i class="fas fa-chart-bar"></i> Estatísticas
+            </button>
+        </div>
+
+        <div id="pending-users" class="tab-content active">
+            <div class="section-header">
+                <h2><i class="fas fa-user-clock"></i> Usuários Aguardando Aprovação</h2>
+                <button class="refresh-btn" onclick="loadDashboardData()">
+                    <i class="fas fa-sync-alt"></i> Atualizar
+                </button>
+            </div>
+            <div id="pendingUsersContainer" class="users-container">
+                <div class="loading">
+                    <i class="fas fa-spinner fa-spin"></i>
+                    <span>Carregando usuários...</span>
+                </div>
+            </div>
+        </div>
+
+        <div id="audit-logs" class="tab-content">
+            <div class="section-header">
+                <h2><i class="fas fa-history"></i> Logs de Auditoria</h2>
+                <div class="filters">
+                    <select id="actionFilter" onchange="filterAuditLogs()">
+                        <option value="">Todas as ações</option>
+                        <option value="login_attempt">Login</option>
+                        <option value="user_approved">Aprovação</option>
+                        <option value="user_rejected">Rejeição</option>
+                        <option value="2fa_setup">2FA Setup</option>
+                    </select>
+                    <select id="successFilter" onchange="filterAuditLogs()">
+                        <option value="">Todos os status</option>
+                        <option value="true">Sucessos</option>
+                        <option value="false">Falhas</option>
+                    </select>
+                    <button class="refresh-btn" onclick="loadDashboardData()">
+                        <i class="fas fa-sync-alt"></i> Atualizar
+                    </button>
+                </div>
+            </div>
+            <div id="auditLogsContainer" class="logs-container">
+                <div class="loading">
+                    <i class="fas fa-spinner fa-spin"></i>
+                    <span>Carregando logs...</span>
+                </div>
+            </div>
+        </div>
+
+        <div id="export-data" class="tab-content">
+            <div class="section-header">
+                <h2><i class="fas fa-download"></i> Exportar Dados de Usuários</h2>
+                <button class="refresh-btn" onclick="loadUsersForExport()">
+                    <i class="fas fa-sync-alt"></i> Atualizar Lista
+                </button>
+            </div>
+            <div id="exportUsersContainer" class="users-container">
+                <div class="loading">
+                    <i class="fas fa-spinner fa-spin"></i>
+                    <span>Carregando usuários...</span>
+                </div>
+            </div>
+        </div>
+
+        <div id="system-stats" class="tab-content">
+            <div class="section-header">
+                <h2><i class="fas fa-chart-bar"></i> Estatísticas do Sistema</h2>
+            </div>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <i class="fas fa-users"></i>
+                    <h3>Total de Usuários</h3>
+                    <p id="totalUsers">-</p>
+                </div>
+                <div class="stat-card">
+                    <i class="fas fa-user-check"></i>
+                    <h3>Usuários Aprovados</h3>
+                    <p id="approvedUsers">-</p>
+                </div>
+                <div class="stat-card">
+                    <i class="fas fa-user-clock"></i>
+                    <h3>Pendentes</h3>
+                    <p id="pendingUsersCount">-</p>
+                </div>
+                <div class="stat-card">
+                    <i class="fas fa-shield-alt"></i>
+                    <h3>2FA Ativo</h3>
+                    <p id="users2FA">-</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <footer>
+        <p>&copy; 2023 Painel de Auditoria CPCT | Todos os direitos reservados</p>
+        <p>Sistema de acesso restrito | Versão 3.0.0</p>
+    </footer>
+
+    <style>
+        /* Dashboard Styles */
+        .dashboard {
+            min-height: 100vh;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 0;
+            animation: fadeIn 0.6s ease;
+        }
+
+        .dashboard-header {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .dashboard-header h1 {
+            color: white;
+            margin: 0;
+            font-size: 1.8rem;
+            font-weight: 600;
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .user-info {
+            color: rgba(255, 255, 255, 0.9);
+            font-size: 0.9rem;
+        }
+
+        .logout-btn {
+            background: rgba(255, 107, 107, 0.2);
+            border: 1px solid rgba(255, 107, 107, 0.3);
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .logout-btn:hover {
+            background: rgba(255, 107, 107, 0.3);
+            transform: translateY(-2px);
+        }
+
+        .dashboard-tabs {
+            display: flex;
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 0 2rem;
+        }
+
+        .tab-btn {
+            background: transparent;
+            border: none;
+            color: rgba(255, 255, 255, 0.7);
+            padding: 1rem 1.5rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border-bottom: 3px solid transparent;
+            font-size: 0.9rem;
+            font-weight: 500;
+        }
+
+        .tab-btn:hover {
+            color: white;
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .tab-btn.active {
+            color: white;
+            border-bottom-color: #4CAF50;
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .tab-content {
+            display: none;
+            padding: 2rem;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .tab-content.active {
+            display: block;
+            animation: slideInUp 0.5s ease;
+        }
+
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+        }
+
+        .section-header h2 {
+            color: white;
+            margin: 0;
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        .refresh-btn {
+            background: rgba(76, 175, 80, 0.2);
+            border: 1px solid rgba(76, 175, 80, 0.3);
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 0.9rem;
+        }
+
+        .refresh-btn:hover {
+            background: rgba(76, 175, 80, 0.3);
+            transform: translateY(-2px);
+        }
+
+        .filters {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .filters select {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: white;
+            padding: 0.5rem;
+            border-radius: 6px;
+            font-size: 0.9rem;
+        }
+
+        .filters select option {
+            background: #333;
+            color: white;
+        }
+
+        /* User Cards */
+        .users-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .user-card {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 1.5rem;
+            transition: all 0.3s ease;
+            animation: slideInUp 0.5s ease;
+        }
+
+        .user-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+        }
+
+        .user-info h4 {
+            color: white;
+            margin: 0 0 1rem 0;
+            font-size: 1.2rem;
+            font-weight: 600;
+        }
+
+        .user-info p {
+            color: rgba(255, 255, 255, 0.8);
+            margin: 0.5rem 0;
+            font-size: 0.9rem;
+        }
+
+        .user-actions {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 1rem;
+        }
+
+        .btn-approve, .btn-reject, .btn-export {
+            flex: 1;
+            padding: 0.75rem;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .btn-approve {
+            background: linear-gradient(135deg, #4CAF50, #45a049);
+            color: white;
+        }
+
+        .btn-approve:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(76, 175, 80, 0.4);
+        }
+
+        .btn-reject {
+            background: linear-gradient(135deg, #f44336, #d32f2f);
+            color: white;
+        }
+
+        .btn-reject:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(244, 67, 54, 0.4);
+        }
+
+        .btn-export {
+            background: linear-gradient(135deg, #2196F3, #1976D2);
+            color: white;
+            margin: 0.25rem;
+        }
+
+        .btn-export:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(33, 150, 243, 0.4);
+        }
+
+        .export-actions {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.5rem;
+            margin-top: 1rem;
+        }
+
+        .export-all-btn {
+            grid-column: 1 / -1;
+            background: linear-gradient(135deg, #FF9800, #F57C00);
+        }
+
+        .data-summary {
+            display: flex;
+            justify-content: space-between;
+            margin: 0.5rem 0;
+            font-size: 0.8rem;
+            color: rgba(255, 255, 255, 0.7);
+        }
+
+        /* Logs Table */
+        .logs-table {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .logs-table table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .logs-table th {
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            padding: 1rem;
+            text-align: left;
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+
+        .logs-table td {
+            color: rgba(255, 255, 255, 0.9);
+            padding: 0.75rem 1rem;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            font-size: 0.85rem;
+        }
+
+        .logs-table tbody tr:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .text-success {
+            color: #4CAF50;
+        }
+
+        .text-error {
+            color: #f44336;
+        }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .stat-card {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 1.5rem;
+            text-align: center;
+            transition: all 0.3s ease;
+            animation: slideInUp 0.5s ease;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+        }
+
+        .stat-card i {
+            font-size: 2.5rem;
+            color: #4CAF50;
+            margin-bottom: 1rem;
+        }
+
+        .stat-card h3 {
+            color: white;
+            margin: 0 0 0.5rem 0;
+            font-size: 1rem;
+            font-weight: 600;
+        }
+
+        .stat-card p {
+            color: #4CAF50;
+            margin: 0;
+            font-size: 2rem;
+            font-weight: 700;
+        }
+
+        .loading {
+            text-align: center;
+            color: rgba(255, 255, 255, 0.7);
+            padding: 2rem;
+            font-size: 1rem;
+        }
+
+        .loading i {
+            font-size: 2rem;
+            margin-bottom: 1rem;
+            display: block;
+        }
+
+        .no-data {
+            text-align: center;
+            color: rgba(255, 255, 255, 0.6);
+            padding: 2rem;
+            font-style: italic;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .dashboard-header {
+                padding: 1rem;
+                flex-direction: column;
+                gap: 1rem;
+            }
+
+            .dashboard-tabs {
+                overflow-x: auto;
+                padding: 0 1rem;
+            }
+
+            .tab-content {
+                padding: 1rem;
+            }
+
+            .section-header {
+                flex-direction: column;
+                gap: 1rem;
+                align-items: flex-start;
+            }
+
+            .users-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .filters {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .logs-table {
+                overflow-x: auto;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+    </style>
+
+    <script>
+        // Configuração da API
+        const API_BASE = '/api/v1/auth';
+        let currentUser = null;
+        let authToken = null;
+        let clientKey = null;
+
+        // Configuração de criptografia (temporariamente desabilitada)
+        const CRYPTO_ENABLED = false; // Desabilitado até implementação completa
+
+        // Inicializar criptografia client-side
+        function initializeCrypto() {
+            if (CRYPTO_ENABLED) {
+                // Gerar chave única para esta sessão
+                clientKey = CryptoJS.lib.WordArray.random(256/8).toString();
+                document.getElementById('cryptoStatus').classList.add('crypto-active');
+                document.getElementById('cryptoStatus').innerHTML = '<i class="fas fa-shield-alt"></i><span>Criptografia Ativa</span>';
+            } else {
+                document.getElementById('cryptoStatus').innerHTML = '<i class="fas fa-lock-open"></i><span>Conexão não criptografada</span>';
+                document.getElementById('cryptoStatus').style.background = 'rgba(255, 255, 255, 0.2)';
+            }
+        }
+
+        // Função para criptografar dados sensíveis (temporariamente desabilitada)
+        function encryptSensitiveData(data) {
+            if (!CRYPTO_ENABLED || !clientKey) return data;
+            
+            const sensitiveFields = ['password', 'totp_token', 'backup_code'];
+            const encrypted = { ...data };
+            
+            for (const field of sensitiveFields) {
+                if (encrypted[field]) {
+                    // Criptografar usando AES com a chave da sessão
+                    encrypted[field] = CryptoJS.AES.encrypt(encrypted[field], clientKey).toString();
+                    encrypted[field + '_encrypted'] = true;
+                }
+            }
+            
+            // Adicionar identificador da chave (hash) para o servidor validar
+            encrypted._client_key_hash = CryptoJS.SHA256(clientKey).toString();
+            
+            return encrypted;
+        }
+
+        // Função para limpar dados sensíveis da memória
+        function clearSensitiveData() {
+            // Sobrescrever inputs de senha
+            const sensitiveInputs = ['password', 'regPassword', 'totpToken', 'backupCode', 'verify2faToken'];
+            sensitiveInputs.forEach(id => {
+                const input = document.getElementById(id);
+                if (input) {
+                    input.value = '';
+                    input.setAttribute('data-cleared', 'true');
+                }
+            });
+        }
+
+        // Elementos do DOM
+        const loginBox = document.getElementById('loginBox');
+        const registerBox = document.getElementById('registerBox');
+        const setup2faBox = document.getElementById('setup2faBox');
+        const loginForm = document.getElementById('loginForm');
+        const registerForm = document.getElementById('registerForm');
+        const verify2faForm = document.getElementById('verify2faForm');
+
+        // Funções utilitárias
+        function showAlert(alertId, type, message, icon = '') {
+            const alertDiv = document.getElementById(alertId);
+            const alertIcon = document.getElementById(alertId.replace('Alert', 'AlertIcon'));
+            const alertText = document.getElementById(alertId.replace('Alert', 'AlertText'));
+            
+            alertDiv.className = `alert alert-${type}`;
+            if (alertIcon) alertIcon.className = `fas ${icon}`;
+            if (alertText) alertText.textContent = message;
+            alertDiv.classList.remove('hidden');
+        }
+
+        function hideAlert(alertId) {
+            document.getElementById(alertId).classList.add('hidden');
+        }
+
+        function showBox(boxId) {
+            document.querySelectorAll('.auth-box').forEach(box => box.classList.add('hidden'));
+            document.getElementById(boxId).classList.remove('hidden');
+        }
+
+        function shakeBox(boxId) {
+            const box = document.getElementById(boxId);
+            box.style.animation = 'shake 0.5s';
+            setTimeout(() => box.style.animation = '', 500);
+        }
+
+        // Função para fazer requisições à API
+        async function apiRequest(endpoint, method = 'GET', data = null, useAuth = false) {
+            const config = {
+                method,
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            };
+
+            if (useAuth && authToken) {
+                config.headers['Authorization'] = `Bearer ${authToken}`;
+            }
+
+            if (data) {
+                // Criptografar dados sensíveis antes de enviar (se habilitado)
+                const processedData = CRYPTO_ENABLED ? encryptSensitiveData(data) : data;
+                config.body = JSON.stringify(processedData);
+                
+                // Log para debug (sem dados sensíveis)
+                if (CRYPTO_ENABLED) {
+                    console.log('Enviando dados criptografados:', {
+                        ...processedData,
+                        password: processedData.password ? '[ENCRYPTED]' : undefined,
+                        totp_token: processedData.totp_token ? '[ENCRYPTED]' : undefined,
+                        backup_code: processedData.backup_code ? '[ENCRYPTED]' : undefined
+                    });
+                } else {
+                    console.log('Enviando dados (sem criptografia client-side):', {
+                        ...data,
+                        password: data.password ? '[HIDDEN]' : undefined,
+                        totp_token: data.totp_token ? '[HIDDEN]' : undefined,
+                        backup_code: data.backup_code ? '[HIDDEN]' : undefined
+                    });
+                }
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}${endpoint}`, config);
+                const result = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(result.error || 'Erro na requisição');
+                }
+
+                return result;
+            } catch (error) {
+                throw error;
+            }
+        }
+
+        // Função para mostrar dashboard após login
+        function showDashboard() {
+            // Esconder todas as caixas de autenticação
+            document.querySelectorAll('.auth-box').forEach(box => box.classList.add('hidden'));
+            
+            // Mostrar dashboard
+            document.getElementById('dashboard').classList.remove('hidden');
+            
+            // Carregar dados do dashboard
+            loadDashboardData();
+
+            // Carregar estatísticas iniciais
+            loadSystemStats();
+        }
+
+        // Função para carregar dados do dashboard
+        async function loadDashboardData() {
+            try {
+                // Carregar usuários pendentes
+                const pendingUsers = await apiRequest('/users/pending', 'GET', null, true);
+                displayPendingUsers(pendingUsers.pending_users);
+                
+                // Carregar logs de auditoria
+                const auditLogs = await apiRequest('/audit-logs?page=1&per_page=10', 'GET', null, true);
+                displayAuditLogs(auditLogs.logs);
+                
+            } catch (error) {
+                console.error('Erro ao carregar dados do dashboard:', error);
+                showAlert('dashboardAlert', 'error', 'Erro ao carregar dados: ' + error.message, 'fa-exclamation-triangle');
+            }
+        }
+
+        // Função para carregar usuários para exportação
+        async function loadUsersForExport() {
+            try {
+                // Fazer requisição direta sem usar apiRequest para evitar conflito de prefixos
+                const headers = {
+                    'Content-Type': 'application/json',
+                };
+                
+                if (authToken) {
+                    headers['Authorization'] = `Bearer ${authToken}`;
+                }
+                
+                const response = await fetch('/api/v1/users-summary', {
+                    method: 'GET',
+                    headers: headers,
+                    mode: 'cors',
+                    credentials: 'omit'
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const result = await response.json();
+                displayUsersForExport(result.users);
+            } catch (error) {
+                console.error('Erro ao carregar usuários para exportação:', error);
+                showAlert('dashboardAlert', 'error', 'Erro ao carregar usuários: ' + error.message, 'fa-exclamation-triangle');
+            }
+        }
+
+        // Função para exibir usuários para exportação
+        function displayUsersForExport(users) {
+            const container = document.getElementById('exportUsersContainer');
+            
+            if (users.length === 0) {
+                container.innerHTML = '<p class="no-data">Nenhum usuário encontrado.</p>';
+                return;
+            }
+            
+            let html = '<div class="users-grid">';
+            users.forEach(user => {
+                const totalData = user.data_counts.total;
+                const hasData = totalData > 0;
+                
+                html += `
+                    <div class="user-card" data-user-id="${user.id}">
+                        <div class="user-info">
+                            <h4><i class="fas fa-user"></i> ${user.username}</h4>
+                            <p><i class="fas fa-envelope"></i> ${user.email}</p>
+                            <p><i class="fas fa-user-tag"></i> Função: ${user.role}</p>
+                            <p><i class="fas fa-calendar"></i> Registro: ${new Date(user.created_at).toLocaleString('pt-BR')}</p>
+                            ${user.last_login ? `<p><i class="fas fa-clock"></i> Último login: ${new Date(user.last_login).toLocaleString('pt-BR')}</p>` : ''}
+                            
+                            <div class="data-summary">
+                                <span><i class="fas fa-mouse-pointer"></i> Ações: ${user.data_counts.user_actions}</span>
+                                <span><i class="fas fa-globe"></i> Requests: ${user.data_counts.requests}</span>
+                                <span><i class="fas fa-file"></i> Docs: ${user.data_counts.document_contents}</span>
+                            </div>
+                            <div class="data-summary">
+                                <strong><i class="fas fa-database"></i> Total: ${totalData} registros</strong>
+                            </div>
+                        </div>
+                        
+                        ${hasData ? `
+                            <div class="export-actions">
+                                <button class="btn-export" onclick="exportUserData(${user.id}, '${user.username}', 'user_actions')">
+                                    <i class="fas fa-mouse-pointer"></i> Ações
+                                </button>
+                                <button class="btn-export" onclick="exportUserData(${user.id}, '${user.username}', 'requests')">
+                                    <i class="fas fa-globe"></i> Requests
+                                </button>
+                                <button class="btn-export export-all-btn" onclick="exportUserData(${user.id}, '${user.username}', 'all')">
+                                    <i class="fas fa-download"></i> Exportar Todos os Dados
+                                </button>
+                            </div>
+                        ` : `
+                            <div class="export-actions">
+                                <p style="text-align: center; color: rgba(255,255,255,0.6); font-style: italic;">
+                                    <i class="fas fa-info-circle"></i> Nenhum dado disponível
+                                </p>
+                            </div>
+                        `}
+                    </div>
+                `;
+            });
+            html += '</div>';
+            
+            container.innerHTML = html;
+        }
+
+        // Função para exportar dados do usuário
+        async function exportUserData(userId, username, dataType) {
+            try {
+                showAlert('dashboardAlert', 'info', `Preparando exportação de dados de ${username}...`, 'fa-download');
+                
+                // Criar link com token de autorização
+                const token = authToken;
+                if (!token) {
+                    throw new Error('Token de autorização não encontrado');
+                }
+                
+                // Fazer download direto com parâmetros de autorização
+                const downloadUrl = `/api/v1/export-user-data/${userId}?type=${dataType}&token=${encodeURIComponent(token)}`;
+                
+                // Criar link temporário para download
+                const link = document.createElement('a');
+                link.href = downloadUrl;
+                link.download = `${username}_${dataType}_${new Date().toISOString().split('T')[0]}.csv`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                
+                setTimeout(() => {
+                    showAlert('dashboardAlert', 'success', `Download de dados de ${username} iniciado!`, 'fa-check-circle');
+                }, 1000);
+                
+            } catch (error) {
+                console.error('Erro ao exportar dados:', error);
+                showAlert('dashboardAlert', 'error', 'Erro ao exportar dados: ' + error.message, 'fa-exclamation-triangle');
+            }
+        }
+
+        // Função para exibir usuários pendentes
+        function displayPendingUsers(users) {
+            const container = document.getElementById('pendingUsersContainer');
+            
+            if (users.length === 0) {
+                container.innerHTML = '<p class="no-data">Nenhum usuário pendente de aprovação.</p>';
+                return;
+            }
+            
+            let html = '<div class="users-grid">';
+            users.forEach(user => {
+                html += `
+                    <div class="user-card" data-user-id="${user.id}">
+                        <div class="user-info">
+                            <h4><i class="fas fa-user"></i> ${user.username}</h4>
+                            <p><i class="fas fa-envelope"></i> ${user.email}</p>
+                            <p><i class="fas fa-user-tag"></i> Função: ${user.role}</p>
+                            <p><i class="fas fa-calendar"></i> Registro: ${new Date(user.created_at).toLocaleString('pt-BR')}</p>
+                            ${user.last_login_ip ? `<p><i class="fas fa-globe"></i> IP: ${user.last_login_ip}</p>` : ''}
+                        </div>
+                        <div class="user-actions">
+                            <button class="btn-approve" onclick="approveUser(${user.id}, '${user.username}')">
+                                <i class="fas fa-check"></i> Aprovar
+                            </button>
+                            <button class="btn-reject" onclick="rejectUser(${user.id}, '${user.username}')">
+                                <i class="fas fa-times"></i> Rejeitar
+                            </button>
+                        </div>
+                    </div>
+                `;
+            });
+            html += '</div>';
+            
+            container.innerHTML = html;
+        }
+
+        // Função para exibir logs de auditoria
+        function displayAuditLogs(logs) {
+            const container = document.getElementById('auditLogsContainer');
+            
+            if (logs.length === 0) {
+                container.innerHTML = '<p class="no-data">Nenhum log de auditoria encontrado.</p>';
+                return;
+            }
+            
+            let html = '<div class="logs-table"><table><thead><tr><th>Data/Hora</th><th>Ação</th><th>Usuário</th><th>IP</th><th>Status</th><th>Detalhes</th></tr></thead><tbody>';
+            
+            logs.forEach(log => {
+                const timestamp = new Date(log.timestamp).toLocaleString('pt-BR');
+                const statusIcon = log.success ? '<i class="fas fa-check-circle text-success"></i>' : '<i class="fas fa-times-circle text-error"></i>';
+                const userName = log.user ? log.user.username : 'Sistema';
+                
+                html += `
+                    <tr>
+                        <td>${timestamp}</td>
+                        <td>${log.action}</td>
+                        <td>${userName}</td>
+                        <td>${log.ip_address || 'N/A'}</td>
+                        <td>${statusIcon}</td>
+                        <td>${log.details || 'N/A'}</td>
+                    </tr>
+                `;
+            });
+            
+            html += '</tbody></table></div>';
+            container.innerHTML = html;
+        }
+
+        // Função para aprovar usuário
+        async function approveUser(userId, username) {
+            if (!confirm(`Tem certeza que deseja aprovar o usuário "${username}"?`)) {
+                return;
+            }
+            
+            try {
+                const result = await apiRequest(`/users/${userId}/approve`, 'POST', null, true);
+                showAlert('dashboardAlert', 'success', result.message, 'fa-check-circle');
+                
+                // Remover usuário da lista
+                document.querySelector(`[data-user-id="${userId}"]`).remove();
+                
+                // Recarregar dados
+                loadDashboardData();
+                
+            } catch (error) {
+                showAlert('dashboardAlert', 'error', 'Erro ao aprovar usuário: ' + error.message, 'fa-exclamation-triangle');
+            }
+        }
+
+        // Função para rejeitar usuário
+        async function rejectUser(userId, username) {
+            const reason = prompt(`Motivo da rejeição do usuário "${username}":`);
+            if (!reason) return;
+            
+            try {
+                const result = await apiRequest(`/users/${userId}/reject`, 'POST', { reason }, true);
+                showAlert('dashboardAlert', 'success', result.message, 'fa-check-circle');
+                
+                // Remover usuário da lista
+                document.querySelector(`[data-user-id="${userId}"]`).remove();
+                
+                // Recarregar dados
+                loadDashboardData();
+                
+            } catch (error) {
+                showAlert('dashboardAlert', 'error', 'Erro ao rejeitar usuário: ' + error.message, 'fa-exclamation-triangle');
+            }
+        }
+
+        // Event Listeners
+        document.getElementById('showRegisterBtn').addEventListener('click', () => {
+            showBox('registerBox');
+            hideAlert('loginAlert');
+            clearSensitiveData();
+        });
+
+        document.getElementById('showLoginBtn').addEventListener('click', () => {
+            showBox('loginBox');
+            hideAlert('registerAlert');
+            clearSensitiveData();
+        });
+
+        // Login
+        loginForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            hideAlert('loginAlert');
+
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const totpToken = document.getElementById('totpToken').value;
+            const backupCode = document.getElementById('backupCode').value;
+
+            try {
+                const loginData = { username, password };
+                if (totpToken) loginData.totp_token = totpToken;
+                if (backupCode) loginData.backup_code = backupCode;
+
+                const result = await apiRequest('/login', 'POST', loginData);
+
+                if (result.requires_2fa) {
+                    document.getElementById('2faSection').classList.remove('hidden');
+                    showAlert('loginAlert', 'info', 'Autenticação de dois fatores necessária', 'fa-shield-alt');
+                } else if (result.requires_2fa_setup) {
+                    // 2FA obrigatório - configurar
+                    authToken = result.access_token;
+                    currentUser = result.user;
+                    clearSensitiveData();
+                    
+                    showAlert('loginAlert', 'info', '2FA é obrigatório. Configurando...', 'fa-shield-alt');
+                    setTimeout(() => setup2FA(), 1000);
+                } else {
+                    // Login completo
+                    authToken = result.access_token;
+                    currentUser = result.user;
+                    clearSensitiveData();
+                    
+                    // Ir para o dashboard
+                    showDashboard();
+                }
+            } catch (error) {
+                showAlert('loginAlert', 'error', error.message, 'fa-exclamation-triangle');
+                shakeBox('loginBox');
+                
+                // Limpar campos 2FA em caso de erro
+                document.getElementById('totpToken').value = '';
+                document.getElementById('backupCode').value = '';
+                clearSensitiveData();
+            }
+        });
+
+        // Registro
+        registerForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            hideAlert('registerAlert');
+
+            const username = document.getElementById('regUsername').value;
+            const email = document.getElementById('regEmail').value;
+            const password = document.getElementById('regPassword').value;
+
+            try {
+                const result = await apiRequest('/register', 'POST', {
+                    username, email, password, role: 'auditor'
+                });
+
+                showAlert('registerAlert', 'success', result.message, 'fa-check-circle');
+                
+                if (result.requires_verification) {
+                    showAlert('registerAlert', 'info', 'Verifique seu email para ativar a conta', 'fa-envelope');
+                }
+
+                // Limpar dados sensíveis
+                clearSensitiveData();
+
+                // Voltar para o login após 3 segundos
+                setTimeout(() => {
+                    showBox('loginBox');
+                    hideAlert('registerAlert');
+                }, 3000);
+
+            } catch (error) {
+                showAlert('registerAlert', 'error', error.message, 'fa-exclamation-triangle');
+                shakeBox('registerBox');
+                clearSensitiveData();
+            }
+        });
+
+        // Configuração 2FA
+        async function setup2FA() {
+            try {
+                showBox('setup2faBox');
+                
+                const result = await apiRequest('/setup-2fa', 'POST', null, true);
+                
+                document.getElementById('qrCodeImage').src = result.qr_code;
+                document.getElementById('manualKey').textContent = result.secret;
+                
+                showAlert('setup2faAlert', 'info', 'Configure 2FA - É OBRIGATÓRIO para continuar', 'fa-qrcode');
+            } catch (error) {
+                showAlert('setup2faAlert', 'error', 'Erro ao configurar 2FA: ' + error.message, 'fa-exclamation-triangle');
+            }
+        }
+
+        // Verificação 2FA
+        verify2faForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            hideAlert('setup2faAlert');
+
+            const token = document.getElementById('verify2faToken').value;
+
+            try {
+                const result = await apiRequest('/verify-2fa-setup', 'POST', { token }, true);
+                
+                // Mostrar códigos de backup
+                const backupCodesList = document.getElementById('backupCodesList');
+                backupCodesList.innerHTML = '';
+                
+                result.backup_codes.forEach(code => {
+                    const li = document.createElement('li');
+                    li.textContent = code;
+                    backupCodesList.appendChild(li);
+                });
+                
+                document.getElementById('qrCodeSection').classList.add('hidden');
+                document.getElementById('verify2faForm').classList.add('hidden');
+                document.getElementById('backupCodesSection').classList.remove('hidden');
+                
+                showAlert('setup2faAlert', 'success', '2FA configurado com sucesso!', 'fa-check-circle');
+                clearSensitiveData();
+
+                // Após configurar 2FA, ir para dashboard
+                setTimeout(() => {
+                    showDashboard();
+                }, 3000);
+
+            } catch (error) {
+                showAlert('setup2faAlert', 'error', error.message, 'fa-exclamation-triangle');
+                clearSensitiveData();
+            }
+        });
+
+        // Verificar se há token na URL (para verificação de email)
+        const urlParams = new URLSearchParams(window.location.search);
+        const emailToken = urlParams.get('token');
+        if (emailToken) {
+            // Verificar email automaticamente
+            fetch(`${API_BASE}/verify-email/${emailToken}`)
+                .then(response => response.json())
+                .then(result => {
+                    if (result.message) {
+                        showAlert('loginAlert', 'success', 'Email verificado com sucesso! Você pode fazer login.', 'fa-check-circle');
+                    } else {
+                        showAlert('loginAlert', 'error', result.error, 'fa-exclamation-triangle');
+                    }
+                })
+                .catch(error => {
+                    showAlert('loginAlert', 'error', 'Erro ao verificar email', 'fa-exclamation-triangle');
+                });
+        }
+
+        // Limpar dados sensíveis ao sair da página
+        window.addEventListener('beforeunload', clearSensitiveData);
+        
+        // Limpar dados sensíveis periodicamente
+        setInterval(clearSensitiveData, 30000); // A cada 30 segundos
+
+        // Inicializar criptografia ao carregar a página
+        document.addEventListener('DOMContentLoaded', initializeCrypto);
+
+        // Funções para dashboard
+        function showTab(tabId) {
+            // Remover active de todas as tabs
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            
+            // Ativar tab selecionada
+            document.querySelector(`[onclick="showTab('${tabId}')"]`).classList.add('active');
+            document.getElementById(tabId).classList.add('active');
+            
+            // Carregar dados específicos da aba
+            if (tabId === 'export-data') {
+                loadUsersForExport();
+            } else if (tabId === 'system-stats') {
+                loadSystemStats();
+            }
+        }
+
+        function filterAuditLogs() {
+            const actionFilter = document.getElementById('actionFilter').value;
+            const successFilter = document.getElementById('successFilter').value;
+            
+            let params = new URLSearchParams();
+            params.append('page', '1');
+            params.append('per_page', '20');
+            
+            if (actionFilter) params.append('action', actionFilter);
+            if (successFilter) params.append('success', successFilter);
+            
+            // Carregar logs filtrados
+            apiRequest(`/audit-logs?${params.toString()}`, 'GET', null, true)
+                .then(result => {
+                    displayAuditLogs(result.logs);
+                })
+                .catch(error => {
+                    console.error('Erro ao filtrar logs:', error);
+                    showAlert('dashboardAlert', 'error', 'Erro ao filtrar logs: ' + error.message, 'fa-exclamation-triangle');
+                });
+        }
+
+        // Event listener para logout
+        document.addEventListener('DOMContentLoaded', () => {
+            const logoutBtn = document.getElementById('logoutBtn');
+            if (logoutBtn) {
+                logoutBtn.addEventListener('click', () => {
+                    if (confirm('Tem certeza que deseja sair?')) {
+                        // Limpar dados locais
+                        authToken = null;
+                        currentUser = null;
+                        clearSensitiveData();
+                        
+                        // Voltar para tela de login
+                        document.getElementById('dashboard').classList.add('hidden');
+                        showBox('loginBox');
+                        hideAlert('dashboardAlert');
+                        
+                        // Mostrar mensagem
+                        showAlert('loginAlert', 'info', 'Logout realizado com sucesso', 'fa-sign-out-alt');
+                    }
+                });
+            }
+        });
+
+        // Atualizar informações do usuário no header
+        function updateUserInfo() {
+            const userInfoElement = document.getElementById('currentUserInfo');
+            if (currentUser && userInfoElement) {
+                userInfoElement.textContent = `${currentUser.username} (${currentUser.role})`;
+            }
+        }
+
+        // Sobrescrever showDashboard para incluir informações do usuário
+        const originalShowDashboard = showDashboard;
+        showDashboard = function() {
+            originalShowDashboard();
+            updateUserInfo();
+        };
+
+        async function loadSystemStats() {
+            try {
+                const headers = { 'Content-Type': 'application/json' };
+                if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+                const response = await fetch('/api/v1/users-summary', {
+                    method: 'GET',
+                    headers: headers,
+                    mode: 'cors',
+                    credentials: 'omit'
+                });
+                if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                const result = await response.json();
+                const users = result.users || [];
+                const totalUsers = users.length;
+                const approvedUsers = users.filter(u => u.approval_status === 'approved').length;
+                const pendingUsers = users.filter(u => u.approval_status === 'pending').length;
+                const users2FA = users.filter(u => u.is_2fa_enabled).length;
+                document.getElementById('totalUsers').textContent = totalUsers;
+                document.getElementById('approvedUsers').textContent = approvedUsers;
+                document.getElementById('pendingUsersCount').textContent = pendingUsers;
+                document.getElementById('users2FA').textContent = users2FA;
+            } catch (error) {
+                console.error('Erro ao carregar estatísticas:', error);
+            }
+        }
+    </script>
+</body>
+</html>

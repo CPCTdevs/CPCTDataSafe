@@ -1,215 +1,380 @@
-// Script para gerenciar login e registro de usuários
+// Login script para CPCT Data Safe
+
+let currentForm = 'login'; // 'login' ou 'register'
 
 // Elementos do DOM
-let usernameInput;
-let passwordInput;
-let loginButton;
-let loginStatus;
-let registerToggle;
-let registerForm;
-let newUsernameInput;
-let newPasswordInput;
-let confirmPasswordInput;
-let registerButton;
-let cancelRegisterButton;
-let registerStatus;
+let loginForm, registerForm, loginButton, registerButton, registerToggle, loginToggle;
+let loginStatus, registerStatus;
+let apiDestination, apiStatus, statusIndicator, statusText;
 
-// Inicializar quando o documento estiver carregado
-document.addEventListener("DOMContentLoaded", () => {
-  // Obter elementos do DOM
-  usernameInput = document.getElementById("username");
-  passwordInput = document.getElementById("password");
-  loginButton = document.getElementById("login-button");
-  loginStatus = document.getElementById("login-status");
+// Inicializar quando o DOM carregar
+document.addEventListener('DOMContentLoaded', function() {
+  console.log('[Login] DOM carregado, inicializando...');
   
-  registerToggle = document.getElementById("register-toggle");
-  registerForm = document.getElementById("register-form");
-  newUsernameInput = document.getElementById("new-username");
-  newPasswordInput = document.getElementById("new-password");
-  confirmPasswordInput = document.getElementById("confirm-password");
-  registerButton = document.getElementById("register-button");
-  cancelRegisterButton = document.getElementById("cancel-register");
-  registerStatus = document.getElementById("register-status");
+  // Obter elementos do DOM
+  initializeElements();
   
   // Configurar event listeners
-  loginButton.addEventListener("click", handleLogin);
-  registerToggle.addEventListener("click", toggleRegisterForm);
-  registerButton.addEventListener("click", handleRegister);
-  cancelRegisterButton.addEventListener("click", toggleRegisterForm);
+  setupEventListeners();
   
-  // Verificar se o usuário já está logado
-  checkLoginStatus();
+  // Verificar status da API
+  checkApiStatus();
+  
+  // Verificar se já está logado
+  checkIfAlreadyLoggedIn();
+  
+  console.log('[Login] Inicialização completa');
 });
 
-// Verificar se o usuário já está logado
-function checkLoginStatus() {
-  chrome.storage.local.get(["userLoggedIn", "userId", "username"], (result) => {
-    if (result.userLoggedIn) {
-      // Redirecionar para a página principal
-      window.location.href = "cpctDataSafePopup.html";
-    }
+function initializeElements() {
+  // Formulários
+  loginForm = document.getElementById('login-form');
+  registerForm = document.getElementById('register-form');
+  
+  // Botões
+  loginButton = document.getElementById('login-button');
+  registerButton = document.getElementById('register-button');
+  registerToggle = document.getElementById('register-toggle');
+  loginToggle = document.getElementById('login-toggle');
+  
+  // Status
+  loginStatus = document.getElementById('login-status');
+  registerStatus = document.getElementById('register-status');
+  
+  // API Status
+  apiDestination = document.getElementById('api-destination');
+  apiStatus = document.getElementById('api-status');
+  statusIndicator = document.getElementById('status-indicator');
+  statusText = document.getElementById('status-text');
+  
+  console.log('[Login] Elementos inicializados:', {
+    loginForm: !!loginForm,
+    registerForm: !!registerForm,
+    apiStatus: !!apiStatus
   });
 }
 
-// Alternar exibição do formulário de registro
-function toggleRegisterForm() {
-  if (registerForm.style.display === "none" || registerForm.style.display === "") {
-    registerForm.style.display = "block";
-    registerToggle.style.display = "none";
+function setupEventListeners() {
+  // Formulário de login
+  const loginFormElement = document.getElementById('login-form-element');
+  if (loginFormElement) {
+    loginFormElement.addEventListener('submit', handleLogin);
+  }
+  
+  // Formulário de registro
+  const registerFormElement = document.getElementById('register-form-element');
+  if (registerFormElement) {
+    registerFormElement.addEventListener('submit', handleRegister);
+  }
+  
+  // Alternar entre login e registro
+  if (registerToggle) {
+    registerToggle.addEventListener('click', () => switchForm('register'));
+  }
+  
+  if (loginToggle) {
+    loginToggle.addEventListener('click', () => switchForm('login'));
+  }
+  
+  // Verificar status da API periodicamente
+  setInterval(checkApiStatus, 30000); // A cada 30 segundos
+}
+
+function switchForm(formType) {
+  currentForm = formType;
+  
+  if (formType === 'register') {
+    loginForm.style.display = 'none';
+    registerForm.style.display = 'block';
   } else {
-    registerForm.style.display = "none";
-    registerToggle.style.display = "block";
-    // Limpar campos e mensagens
-    newUsernameInput.value = "";
-    newPasswordInput.value = "";
-    confirmPasswordInput.value = "";
-    registerStatus.textContent = "";
-    registerStatus.className = "status-message";
+    loginForm.style.display = 'block';
+    registerForm.style.display = 'none';
   }
+  
+  // Limpar mensagens de status
+  clearStatus();
 }
 
-// Lidar com tentativa de login
-function handleLogin() {
-  const username = usernameInput.value.trim();
-  const password = passwordInput.value;
+function handleLogin(event) {
+  event.preventDefault();
   
-  // Validar campos
+  const username = document.getElementById('username').value.trim();
+  const password = document.getElementById('password').value;
+  
   if (!username || !password) {
-    showLoginStatus("Preencha todos os campos", "error");
+    showStatus('login', 'Por favor, preencha todos os campos', 'error');
     return;
   }
   
-  // Desabilitar botão durante o processo
-  loginButton.disabled = true;
+  setLoading('login', true);
+  clearStatus('login');
   
-  // Verificar credenciais
-  chrome.storage.local.get(["users"], (result) => {
-    const users = result.users || {};
+  console.log('[Login] Tentando fazer login para:', username);
+  
+  chrome.runtime.sendMessage({
+    action: 'login',
+    username: username,
+    password: password
+  }, (response) => {
+    setLoading('login', false);
     
-    if (users[username] && users[username].password === hashPassword(password)) {
-      // Login bem-sucedido
-      const userId = users[username].userId;
-      
-      // Armazenar informações de login
-      chrome.storage.local.set({
-        userLoggedIn: true,
-        userId: userId,
-        username: username,
-        lastLogin: new Date().toISOString()
-      }, () => {
-        // Notificar background script sobre o login
-        chrome.runtime.sendMessage({
-          action: "userLoggedIn",
-          userId: userId,
-          username: username
-        });
-        
-        // Redirecionar para a página principal
-        showLoginStatus("Login bem-sucedido! Redirecionando...", "success");
-        setTimeout(() => {
-          window.location.href = "cpctDataSafePopup.html";
-        }, 1000);
-      });
-    } else {
-      // Login falhou
-      showLoginStatus("Usuário ou senha incorretos", "error");
-      loginButton.disabled = false;
-    }
-  });
-}
-
-// Lidar com registro de novo usuário
-function handleRegister() {
-  const newUsername = newUsernameInput.value.trim();
-  const newPassword = newPasswordInput.value;
-  const confirmPassword = confirmPasswordInput.value;
-  
-  // Validar campos
-  if (!newUsername || !newPassword || !confirmPassword) {
-    showRegisterStatus("Preencha todos os campos", "error");
-    return;
-  }
-  
-  if (newPassword !== confirmPassword) {
-    showRegisterStatus("As senhas não coincidem", "error");
-    return;
-  }
-  
-  if (newPassword.length < 6) {
-    showRegisterStatus("A senha deve ter pelo menos 6 caracteres", "error");
-    return;
-  }
-  
-  // Desabilitar botão durante o processo
-  registerButton.disabled = true;
-  
-  // Verificar se o usuário já existe
-  chrome.storage.local.get(["users"], (result) => {
-    const users = result.users || {};
-    
-    if (users[newUsername]) {
-      showRegisterStatus("Este nome de usuário já está em uso", "error");
-      registerButton.disabled = false;
+    if (chrome.runtime.lastError) {
+      console.error('[Login] Erro de comunicação:', chrome.runtime.lastError);
+      showStatus('login', 'Erro de comunicação com a extensão', 'error');
       return;
     }
     
-    // Gerar ID único para o usuário
-    const userId = generateUniqueId();
+    console.log('[Login] Resposta recebida:', response);
     
-    // Adicionar novo usuário
-    users[newUsername] = {
-      userId: userId,
-      password: hashPassword(newPassword),
-      createdAt: new Date().toISOString()
-    };
-    
-    // Salvar usuários atualizados
-    chrome.storage.local.set({ users: users }, () => {
-      showRegisterStatus("Registro bem-sucedido! Você pode fazer login agora.", "success");
-      
-      // Limpar campos
-      newUsernameInput.value = "";
-      newPasswordInput.value = "";
-      confirmPasswordInput.value = "";
-      
-      // Fechar formulário de registro após um atraso
+    if (response && response.success) {
+      showStatus('login', 'Login realizado com sucesso! Redirecionando...', 'success');
       setTimeout(() => {
-        toggleRegisterForm();
-        registerButton.disabled = false;
-      }, 2000);
-    });
+        window.location.href = 'cpctDataSafePopup.html';
+      }, 1500);
+    } else {
+      const errorMessage = response?.message || 'Erro desconhecido no login';
+      showStatus('login', errorMessage, 'error');
+    }
   });
 }
 
-// Mostrar mensagem de status no formulário de login
-function showLoginStatus(message, type) {
-  loginStatus.textContent = message;
-  loginStatus.className = `status-message ${type}`;
-}
-
-// Mostrar mensagem de status no formulário de registro
-function showRegisterStatus(message, type) {
-  registerStatus.textContent = message;
-  registerStatus.className = `status-message ${type}`;
-}
-
-// Gerar ID único para usuário
-function generateUniqueId() {
-  // Combinar timestamp com string aleatória
-  const timestamp = Date.now().toString(36);
-  const randomStr = Math.random().toString(36).substring(2, 10);
-  return `user_${timestamp}_${randomStr}`;
-}
-
-// Função simples de hash para senhas (em produção, use bcrypt ou similar)
-function hashPassword(password) {
-  // Esta é uma implementação simples para demonstração
-  // Em produção, use uma biblioteca de hash segura
-  let hash = 0;
-  for (let i = 0; i < password.length; i++) {
-    const char = password.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // Converter para inteiro de 32 bits
+function handleRegister(event) {
+  event.preventDefault();
+  
+  const username = document.getElementById('new-username').value.trim();
+  const email = document.getElementById('new-email').value.trim();
+  const password = document.getElementById('new-password').value;
+  const confirmPassword = document.getElementById('confirm-password').value;
+  
+  // Validações
+  if (!username || !email || !password || !confirmPassword) {
+    showStatus('register', 'Por favor, preencha todos os campos', 'error');
+    return;
   }
-  return hash.toString(16); // Converter para string hexadecimal
+  
+  if (password !== confirmPassword) {
+    showStatus('register', 'As senhas não coincidem', 'error');
+    return;
+  }
+  
+  if (password.length < 6) {
+    showStatus('register', 'A senha deve ter pelo menos 6 caracteres', 'error');
+    return;
+  }
+  
+  // Validação de email básica
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    showStatus('register', 'Por favor, insira um email válido', 'error');
+    return;
+  }
+  
+  setLoading('register', true);
+  clearStatus('register');
+  
+  console.log('[Login] Tentando registrar usuário:', username);
+  
+  chrome.runtime.sendMessage({
+    action: 'register',
+    username: username,
+    email: email,
+    password: password
+  }, (response) => {
+    setLoading('register', false);
+    
+    if (chrome.runtime.lastError) {
+      console.error('[Login] Erro de comunicação:', chrome.runtime.lastError);
+      showStatus('register', 'Erro de comunicação com a extensão', 'error');
+      return;
+    }
+    
+    console.log('[Login] Resposta de registro:', response);
+    
+    if (response && response.success) {
+      showStatus('register', 'Registro realizado com sucesso! Aguarde aprovação do administrador.', 'success');
+      setTimeout(() => {
+        switchForm('login');
+        showStatus('login', 'Conta criada! Aguarde aprovação para fazer login.', 'info');
+      }, 3000);
+    } else {
+      const errorMessage = response?.message || 'Erro desconhecido no registro';
+      showStatus('register', errorMessage, 'error');
+    }
+  });
+}
+
+function setLoading(formType, isLoading) {
+  const button = formType === 'login' ? loginButton : registerButton;
+  const buttonText = button?.querySelector('.button-text');
+  const spinner = button?.querySelector('.loading-spinner');
+  
+  if (button) {
+    button.disabled = isLoading;
+    if (buttonText) {
+      buttonText.style.display = isLoading ? 'none' : 'inline';
+    }
+    if (spinner) {
+      spinner.style.display = isLoading ? 'inline-block' : 'none';
+    }
+  }
+}
+
+function showStatus(formType, message, type) {
+  const statusElement = formType === 'login' ? loginStatus : registerStatus;
+  
+  if (statusElement) {
+    statusElement.textContent = message;
+    statusElement.className = `status-message ${type}`;
+    statusElement.style.display = 'block';
+    
+    // Auto-ocultar após 5 segundos se for sucesso ou info
+    if (type === 'success' || type === 'info') {
+      setTimeout(() => {
+        clearStatus(formType);
+      }, 5000);
+    }
+  }
+  
+  console.log(`[Login] Status ${formType}:`, message, type);
+}
+
+function clearStatus(formType) {
+  if (formType) {
+    const statusElement = formType === 'login' ? loginStatus : registerStatus;
+    if (statusElement) {
+      statusElement.style.display = 'none';
+      statusElement.textContent = '';
+    }
+  } else {
+    // Limpar ambos
+    if (loginStatus) {
+      loginStatus.style.display = 'none';
+      loginStatus.textContent = '';
+    }
+    if (registerStatus) {
+      registerStatus.style.display = 'none';
+      registerStatus.textContent = '';
+    }
+  }
+}
+
+function checkIfAlreadyLoggedIn() {
+  console.log('[Login] Verificando se já está logado...');
+  
+  chrome.runtime.sendMessage({ action: 'getAuthStatus' }, (response) => {
+    if (chrome.runtime.lastError) {
+      console.log('[Login] Erro ao verificar login:', chrome.runtime.lastError);
+      return;
+    }
+    
+    console.log('[Login] Status de auth:', response);
+    
+    if (response && response.isAuthenticated) {
+      console.log('[Login] Usuário já está logado, redirecionando...');
+      window.location.href = 'cpctDataSafePopup.html';
+    }
+  });
+}
+
+function checkApiStatus() {
+  console.log('[Login] Verificando status da API...');
+  
+  // Atualizar destino da API
+  chrome.runtime.sendMessage({ action: 'getApiConfig' }, (config) => {
+    if (apiDestination && config?.baseUrl) {
+      try {
+        const url = new URL(config.baseUrl);
+        apiDestination.textContent = url.hostname;
+        apiDestination.title = config.baseUrl;
+      } catch (e) {
+        apiDestination.textContent = config.baseUrl;
+      }
+    }
+  });
+  
+  // Usar a função de verificação do background script
+  chrome.runtime.sendMessage({ action: 'checkApiStatus' }, (response) => {
+    if (chrome.runtime.lastError) {
+      console.error('[Login] Erro ao verificar status da API:', chrome.runtime.lastError);
+      updateApiStatus(false, { error: 'Erro de comunicação com extensão' });
+      return;
+    }
+    
+    console.log('[Login] Resposta do status da API:', response);
+    
+    if (response) {
+      updateApiStatus(response.isOnline, response.healthData || response);
+    } else {
+      updateApiStatus(false, { error: 'Resposta inválida' });
+    }
+  });
+}
+
+function updateApiStatus(isOnline, healthData) {
+  console.log('[Login] Atualizando status da API:', isOnline, healthData);
+  
+  let statusMessage = "Verificando...";
+  
+  if (isOnline === true) {
+    if (healthData?.status === 'healthy') {
+      statusMessage = "Conectado";
+    } else if (healthData?.status === 'server_responding') {
+      statusMessage = "Servidor respondendo";
+    } else {
+      statusMessage = "Online";
+    }
+  } else if (isOnline === false) {
+    if (healthData?.error) {
+      if (healthData.error.includes('Failed to fetch')) {
+        statusMessage = "Servidor inacessível";
+      } else if (healthData.error.includes('Servidor não acessível')) {
+        statusMessage = "Sem conexão";
+      } else {
+        statusMessage = "Erro de conexão";
+      }
+    } else {
+      statusMessage = "Offline";
+    }
+  }
+  
+  if (statusIndicator) {
+    statusIndicator.className = `status-indicator ${isOnline ? 'online' : 'offline'}`;
+  }
+  
+  if (statusText) {
+    statusText.textContent = statusMessage;
+  }
+  
+  if (apiStatus) {
+    apiStatus.className = `api-info-value ${isOnline ? 'success' : 'error'}`;
+    
+    // Criar tooltip detalhado
+    let tooltipText = `Status: ${statusMessage}\n`;
+    
+    if (healthData) {
+      if (healthData.status === 'healthy') {
+        tooltipText += `Servidor: Saudável\n`;
+      } else if (healthData.status === 'server_responding') {
+        tooltipText += `Servidor: Respondendo\nNota: Health endpoint pode não estar disponível\n`;
+      }
+      
+      if (healthData.error) {
+        tooltipText += `Erro: ${healthData.error}\n`;
+      }
+      
+      if (healthData.endpoint) {
+        tooltipText += `Endpoint testado: ${healthData.endpoint}\n`;
+      }
+    }
+    
+    tooltipText += `Última verificação: ${new Date().toLocaleString('pt-BR')}`;
+    apiStatus.title = tooltipText;
+  }
+  
+  // Log adicional para debug
+  console.log('[Login] Status atualizado:', {
+    isOnline,
+    statusMessage,
+    healthData: healthData
+  });
 }

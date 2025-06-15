@@ -1,5 +1,12 @@
 // ===================== CONFIGURAÇÃO =====================
 
+// Função para formatar timestamp compatível com o servidor
+function getCompatibleTimestamp() {
+  const now = new Date();
+  // Formato sem milissegundos e com +00:00 ao invés de Z
+  return now.toISOString().slice(0, 19) + '+00:00';
+}
+
 const CONFIG = {
   GOOGLE_DOMAINS: ['google.com', 'youtube.com'],
   REQUEST_ASSOCIATION_TIME: 5000,
@@ -446,7 +453,7 @@ class ActionTracker {
             stack: error.stack,
             context: context,
             failedActionType: failedAction ? failedAction.type : "unknown",
-            timestamp: new Date().toISOString()
+            timestamp: getCompatibleTimestamp()
           }
         });
       }
@@ -467,7 +474,7 @@ class EventHandlers {
       ActionTracker.sendUserActionWithCorrelation({
         type: "click",
         target: Utils.getTargetInfo(event.target),
-        timestamp: new Date().toISOString(),
+        timestamp: getCompatibleTimestamp(),
         position: { x: event.clientX, y: event.clientY }
       });
     }, true);
@@ -492,7 +499,7 @@ class EventHandlers {
             type: "keyInput",
             target: targetInfo,
             value: state.keyBuffer,
-            timestamp: new Date().toISOString()
+            timestamp: getCompatibleTimestamp()
           });
           state.keyBuffer = "";
         }
@@ -505,7 +512,7 @@ class EventHandlers {
             type: "keyInput",
             target: targetInfo,
             value: state.keyBuffer,
-            timestamp: new Date().toISOString()
+            timestamp: getCompatibleTimestamp()
           });
           state.keyBuffer = "";
         }
@@ -514,7 +521,7 @@ class EventHandlers {
           target: targetInfo,
           key: event.key,
           code: event.code,
-          timestamp: new Date().toISOString()
+          timestamp: getCompatibleTimestamp()
         });
       }
     }, true);
@@ -524,7 +531,7 @@ class EventHandlers {
       state.focusState = true;
       ActionTracker.sendUserActionWithCorrelation({
         type: "windowFocus",
-        timestamp: new Date().toISOString()
+        timestamp: getCompatibleTimestamp()
       });
     }, true);
 
@@ -532,7 +539,7 @@ class EventHandlers {
       state.focusState = false;
       ActionTracker.sendUserActionWithCorrelation({
         type: "windowBlur",
-        timestamp: new Date().toISOString()
+        timestamp: getCompatibleTimestamp()
       });
     }, true);
 
@@ -544,7 +551,7 @@ class EventHandlers {
         ActionTracker.sendUserActionWithCorrelation({
           type: "scroll",
           scrollPosition: { x: window.scrollX, y: window.scrollY },
-          timestamp: new Date().toISOString()
+          timestamp: getCompatibleTimestamp()
         });
       }, CONFIG.SCROLL_DEBOUNCE);
     }, true);
@@ -562,7 +569,7 @@ class EventHandlers {
         type: "change",
         target: targetInfo,
         value: value,
-        timestamp: new Date().toISOString()
+        timestamp: getCompatibleTimestamp()
       });
     }, true);
 
@@ -578,7 +585,7 @@ class EventHandlers {
           message: event.error.message, 
           stack: event.error.stack 
         } : null,
-        timestamp: new Date().toISOString()
+        timestamp: getCompatibleTimestamp()
       });
     });
 
@@ -587,7 +594,7 @@ class EventHandlers {
         type: "pageError",
         message: "Rejeição de promise não tratada",
         reason: event.reason ? String(event.reason) : null,
-        timestamp: new Date().toISOString()
+        timestamp: getCompatibleTimestamp()
       });
     });
 
@@ -601,6 +608,26 @@ class EventHandlers {
   }
 
   static setupMessageListener() {
+    let messageQueue = new Map();
+    let processingTimeout = null;
+
+    const processMessageQueue = () => {
+      messageQueue.forEach((msg, key) => {
+        if (Utils.isExtensionContextValid()) {
+          console.log(`[CPCT Content Script] Encaminhando mensagem tipo ${msg.type} para script de background...`);
+          Communication.sendMessage({ action: "userAction", data: msg });
+
+          if (msg.type === "xhr" || msg.type === "fetch") {
+            state.lastRequestTime = Date.now();
+          }
+        } else {
+          console.warn(`[CPCT Content Script] Contexto da extensão inválido, mensagem tipo ${msg.type} não encaminhada.`);
+        }
+      });
+      messageQueue.clear();
+      processingTimeout = null;
+    };
+
     window.addEventListener("message", event => {
       if (event.source !== window || !event.data || !event.data.__CPCT__) {
         return;
@@ -634,19 +661,13 @@ class EventHandlers {
         }
       }
 
-      try {
-        if (Utils.isExtensionContextValid()) {
-          console.log(`[CPCT Content Script] Encaminhando mensagem tipo ${msg.type} para script de background...`);
-          Communication.sendMessage({ action: "userAction", data: msg });
+      // Queue the message for processing
+      const messageKey = `${msg.type}_${msg.requestId || msg.url}_${Date.now()}`;
+      messageQueue.set(messageKey, msg);
 
-          if (msg.type === "xhr" || msg.type === "fetch") {
-            state.lastRequestTime = Date.now();
-          }
-        } else {
-          console.warn(`[CPCT Content Script] Contexto da extensão inválido, mensagem tipo ${msg.type} não encaminhada.`);
-        }
-      } catch (error) {
-        console.error(`[CPCT Content Script] Erro ao encaminhar mensagem tipo ${msg.type} para background:`, error);
+      // Schedule processing if not already scheduled
+      if (!processingTimeout) {
+        processingTimeout = setTimeout(processMessageQueue, 100); // 100ms debounce
       }
     });
   }
@@ -676,7 +697,7 @@ class ScriptInjector {
             event: "scriptInjectionFailed",
             method: "fileLoad",
             error: e ? (e.message || "Erro de carregamento desconhecido") : "Erro de carregamento desconhecido",
-            timestamp: new Date().toISOString()
+            timestamp: getCompatibleTimestamp()
           });
         }
       };
@@ -690,7 +711,7 @@ class ScriptInjector {
           event: "scriptInjectionFailed",
           method: "fileLoadSetup",
           error: error ? error.message : "Erro de configuração desconhecido",
-          timestamp: new Date().toISOString()
+          timestamp: getCompatibleTimestamp()
         });
       }
     }
@@ -724,7 +745,7 @@ class Monitor {
     ActionTracker.sendUserActionWithCorrelation({
       type: "pageMetadata",
       data: metadata,
-      timestamp: new Date().toISOString()
+      timestamp: getCompatibleTimestamp()
     });
   }
 
@@ -733,7 +754,7 @@ class Monitor {
       ActionTracker.sendUserActionWithCorrelation({
         type: "mouseMovement",
         position: state.lastMousePosition,
-        timestamp: new Date().toISOString()
+        timestamp: getCompatibleTimestamp()
       });
       state.mouseMoved = false;
     }
@@ -788,7 +809,7 @@ class Monitor {
             documentId: window.location.pathname,
             changes: state.documentChangeBuffer,
             content: contentText,
-            timestamp: new Date().toISOString()
+            timestamp: getCompatibleTimestamp()
           });
           state.documentChangeBuffer = [];
         }
@@ -797,7 +818,7 @@ class Monitor {
       editorElement.addEventListener("input", (event) => {
         state.documentChangeBuffer.push({
           type: "input",
-          timestamp: new Date().toISOString()
+          timestamp: getCompatibleTimestamp()
         });
         debouncedSendContent();
       });
@@ -825,7 +846,7 @@ class Monitor {
         type: "diagnosticEvent",
         event: "noRequestsDetected",
         details: `Último horário de requisição: ${state.lastRequestTime ? new Date(state.lastRequestTime).toISOString() : "Nunca"}`,
-        timestamp: new Date().toISOString()
+        timestamp: getCompatibleTimestamp()
       });
     }
   }
@@ -871,7 +892,7 @@ class App {
         if (Utils.isExtensionContextValid()) {
           ActionTracker.sendUserActionWithCorrelation({
             type: "contentScriptInitialized",
-            timestamp: new Date().toISOString()
+            timestamp: getCompatibleTimestamp()
           });
         }
       } catch (e) {

@@ -2,25 +2,47 @@
 const ENCRYPTION_CHUNK_SIZE = 190; // RSA-2048 can encrypt 190 bytes at a time
 
 class Encryption {
+  static #cachedPublicKey = null;
+  static #cachedKeyPromise = null;
+  static #encryptionCache = new Map();
+  static #CACHE_TTL = 5 * 60 * 1000; // 5 minutes cache TTL
+
   static async loadPublicKey() {
+    // Return cached key if available
+    if (this.#cachedPublicKey) {
+      console.log('[CPCT Encryption] Usando chave pública em cache');
+      return this.#cachedPublicKey;
+    }
+
+    // If a key loading is in progress, wait for it
+    if (this.#cachedKeyPromise) {
+      console.log('[CPCT Encryption] Aguardando carregamento da chave em progresso');
+      return this.#cachedKeyPromise;
+    }
+
     try {
       console.log('[CPCT Encryption] Tentando carregar chave pública...');
       const keyUrl = chrome.runtime.getURL('keys/rsa_public.pem');
       console.log('[CPCT Encryption] URL da chave:', keyUrl);
       
-      const response = await fetch(keyUrl);
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      
-      const publicKeyPEM = await response.text();
-      if (!publicKeyPEM.includes('-----BEGIN PUBLIC KEY-----')) {
-        throw new Error('Invalid public key format');
-      }
-      
-      console.log('[CPCT Encryption] Chave pública carregada com sucesso');
-      return publicKeyPEM;
+      this.#cachedKeyPromise = fetch(keyUrl).then(async response => {
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const publicKeyPEM = await response.text();
+        if (!publicKeyPEM.includes('-----BEGIN PUBLIC KEY-----')) {
+          throw new Error('Invalid public key format');
+        }
+        
+        console.log('[CPCT Encryption] Chave pública carregada com sucesso');
+        this.#cachedPublicKey = publicKeyPEM;
+        return publicKeyPEM;
+      });
+
+      return await this.#cachedKeyPromise;
     } catch (error) {
+      this.#cachedKeyPromise = null;
       console.error('[CPCT Encryption] Erro ao carregar chave pública:', error);
       throw new Error(`Failed to load public key: ${error.message}`);
     }
@@ -29,6 +51,18 @@ class Encryption {
   static async encryptData(data) {
     try {
       console.log('[CPCT Encryption] Iniciando processo de criptografia...');
+      
+      // Generate cache key
+      const dataStr = JSON.stringify(data);
+      const cacheKey = await this.#generateCacheKey(dataStr);
+      
+      // Check cache
+      const cachedResult = this.#encryptionCache.get(cacheKey);
+      if (cachedResult && (Date.now() - cachedResult.timestamp) < this.#CACHE_TTL) {
+        console.log('[CPCT Encryption] Usando resultado em cache');
+        return cachedResult.data;
+      }
+
       const publicKey = await this.loadPublicKey();
       const key = await this.importPublicKey(publicKey);
       
@@ -36,7 +70,6 @@ class Encryption {
         throw new Error('No data provided for encryption');
       }
       
-      const dataStr = JSON.stringify(data);
       console.log('[CPCT Encryption] Dados convertidos para string, tamanho:', dataStr.length);
       
       const encoder = new TextEncoder();
@@ -73,15 +106,42 @@ class Encryption {
         }
       }
 
-      console.log('[CPCT Encryption] Todos os chunks foram criptografados com sucesso');
-      return {
+      const result = {
         encrypted: true,
         chunks: encryptedChunks,
         originalLength: fullBuf.byteLength
       };
+
+      // Cache the result
+      this.#encryptionCache.set(cacheKey, {
+        data: result,
+        timestamp: Date.now()
+      });
+
+      // Clean up old cache entries
+      this.#cleanupCache();
+
+      console.log('[CPCT Encryption] Todos os chunks foram criptografados com sucesso');
+      return result;
     } catch (error) {
       console.error('[CPCT Encryption] Erro durante o processo de criptografia:', error);
       throw new Error(`Failed to encrypt data: ${error.message}`);
+    }
+  }
+
+  static async #generateCacheKey(data) {
+    const encoder = new TextEncoder();
+    const dataBuffer = encoder.encode(data);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', dataBuffer);
+    return this.arrayBufferToBase64(hashBuffer);
+  }
+
+  static #cleanupCache() {
+    const now = Date.now();
+    for (const [key, value] of this.#encryptionCache.entries()) {
+      if (now - value.timestamp > this.#CACHE_TTL) {
+        this.#encryptionCache.delete(key);
+      }
     }
   }
 
